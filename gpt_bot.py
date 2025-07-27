@@ -64,14 +64,14 @@ def is_allowed(update: Update) -> bool:
     chat = update.effective_chat
 
     text = update.message.text or update.message.caption or ""
-    logging.info(f"[{user_id}] - chat: {chat} - Text: {text.lower}")
+    logging.info(f"[{user_id}] - chat: {chat} - Text: {text.lower()}")
  # Если пользователь — админ, всегда разрешаем
     if user_id in ADMINS:
         return True
 
     if chat.id == CHAT_ID and chat.type in ("group", "supergroup"):
         text = update.message.text or update.message.caption or ""
-        return f"{BOT_USERNAME.lower()}" in text.lower()
+        return f"@{BOT_USERNAME.lower()}" in text
 # --------------------
 # Handlers
 # --------------------
@@ -151,8 +151,8 @@ async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка при получении квоты: {format_exc(e)}")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    #if not is_allowed(update):
-     #   return
+    if not is_allowed(update):
+        return
     user_input = update.message.text
     user = update.effective_user
 
@@ -211,6 +211,11 @@ async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE)
     logging.info(f"[{user.id}] @{user.username or 'no_username'} - UNSUPPORTED: {kind} - Caption: {caption}")
     await update.message.reply_text("❌ Извините, я пока не умею обрабатывать файлы, изображения или вложения.")
 
+async def debug_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        logging.info("RAW UPDATE: %s", update.to_dict())
+    except Exception as e:
+        logging.exception("Failed to log raw update: %s", e)
 
 # --------------------
 # Main
@@ -225,11 +230,15 @@ def main():
     app.add_handler(CommandHandler("quota", quota))
 
     # Сообщения
+    app.add_handler(MessageHandler(filters.ALL, debug_log), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    app.add_handler(MessageHandler(filters.PHOTO | Document.ALL | filters.VIDEO | filters.VOICE, handle_unsupported))
+    app.add_handler(MessageHandler(filters.PHOTO | Document.ALL | filters.VIDEO, handle_unsupported))
+    me = app.bot.get_me()
+    logging.info("Bot username:", me.username)
+ 
 
-    print(f"GPT-бот запущен! Текущая модель: {current_model}")
+    logging.info(f"GPT-бот запущен! Текущая модель: {current_model}")
     app.run_polling()
 
 if __name__ == "__main__":
