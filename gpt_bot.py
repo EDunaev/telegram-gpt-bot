@@ -151,8 +151,8 @@ async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка при получении квоты: {format_exc(e)}")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update):
-        return
+    #if not is_allowed(update):
+     #   return
     user_input = update.message.text
     user = update.effective_user
 
