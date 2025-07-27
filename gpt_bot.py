@@ -64,14 +64,14 @@ def is_allowed(update: Update) -> bool:
     chat = update.effective_chat
 
     text = update.message.text or update.message.caption or ""
-    logging.info(f"[{user_id}] - chat: {chat} - Text: {text.lower()}")
+    logging.info(f"[{user_id}] - chat_id: {chat.id} - type: {chat.type} - Text: {text}")
  # Если пользователь — админ, всегда разрешаем
     if user_id in ADMINS:
         return True
 
     if chat.id == CHAT_ID and chat.type in ("group", "supergroup"):
         text = update.message.text or update.message.caption or ""
-        return f"@{BOT_USERNAME.lower()}" in text
+        return BOT_USERNAME.lower() in text.lower() if text else False
 # --------------------
 # Handlers
 # --------------------
@@ -230,7 +230,7 @@ def main():
     app.add_handler(CommandHandler("quota", quota))
 
     # Сообщения
-    app.add_handler(MessageHandler(filters.ALL, debug_log), group=0)
+    #app.add_handler(MessageHandler(filters.ALL, debug_log), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO | Document.ALL | filters.VIDEO, handle_unsupported))
