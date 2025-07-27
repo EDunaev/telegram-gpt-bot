@@ -34,6 +34,7 @@ current_model = DEFAULT_MODEL  # будет изменяться командо�
 ADMINS = {1091992386, 1687504544}  # ← замени на реальные user.id админов
 LIMITED_USERS = {111111111, 222222222, 333333333} 
 CHAT_ID = -1001785925671
+BOT_USERNAME = "DunaevAssistentBot"
 
 logging.basicConfig(
     filename="bot.log",
@@ -59,7 +60,16 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMINS
 
 def is_allowed(update: Update) -> bool:
-    return update.effective_chat.id == CHAT_ID or is_admin(update.effective_user.id)
+    user_id = update.effective_user.id
+    chat = update.effective_chat
+
+ # Если пользователь — админ, всегда разрешаем
+    if user_id in ADMINS:
+        return True
+
+    if chat.id == CHAT_ID and chat.type in ("group", "supergroup"):
+        text = update.message.text or update.message.caption or ""
+        return f"@{BOT_USERNAME.lower()}" in text.lower()
 # --------------------
 # Handlers
 # --------------------
