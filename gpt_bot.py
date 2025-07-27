@@ -2,6 +2,8 @@
 import os
 import tempfile
 import requests
+import logging
+from datetime import datetime
 from pydub import AudioSegment
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -28,6 +30,12 @@ if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 current_model = DEFAULT_MODEL  # будет изменяться командой /model
+logging.basicConfig(
+    filename="bot.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 
 # --------------------
 # Helpers
@@ -97,6 +105,9 @@ async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text
+    user = update.effective_user
+
+    logging.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
     try:
         resp = client.chat.completions.create(
             model=current_model,
@@ -107,6 +118,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {format_exc(e)}")
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    logging.info(f"[{user.id}] @{user.username or 'no_username'} - VOICE: получено голосовое сообщение")
     try:
         voice_file = await update.message.voice.get_file()
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
@@ -123,6 +136,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file=audio_file,
             )
         text = transcript.text
+        logging.info(f"{user} - VOICE TEXT: {text}")
 
         # Отвечаем LLM-ом
         resp = client.chat.completions.create(
@@ -133,7 +147,16 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🗣️ Ты сказал: {text}\n\n🤖 {resp.choices[0].message.content}"
         )
     except Exception as e:
+        logging.error(f"{user} - VOICE ERROR: {str(e)}")
         await update.message.reply_text(f"❌ Ошибка при обработке голосового: {format_exc(e)}")
+
+async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    kind = type(update.message.effective_attachment)
+
+    logging.info(f"[{user.id}] @{user.username or 'no_username'} - UNSUPPORTED: {kind}")
+    await update.message.reply_text("❌ Извините, я пока не умею обрабатывать файлы, изображения или вложения.")
+
 
 # --------------------
 # Main
@@ -150,6 +173,7 @@ def main():
     # Сообщения
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.DOCUMENT | filters.VIDEO | filters.VOICE, handle_unsupported))
 
     print(f"GPT-бот запущен! Текущая модель: {current_model}")
     app.run_polling()
