@@ -38,6 +38,13 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
+# 🔇 Отключаем лишние логи от сторонних библиотек
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram.bot").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext._updater").setLevel(logging.WARNING)
+logging.getLogger("telegram.request").setLevel(logging.WARNING)
+
 # --------------------
 # Helpers
 # --------------------
