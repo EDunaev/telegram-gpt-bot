@@ -31,6 +31,10 @@ if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 current_model = DEFAULT_MODEL  # будет изменяться командой /model
+ADMINS = {1091992386, 1687504544}  # ← замени на реальные user.id админов
+LIMITED_USERS = {111111111, 222222222, 333333333} 
+CHAT_ID = -1001785925671
+
 logging.basicConfig(
     filename="bot.log",
     level=logging.INFO,
@@ -51,28 +55,45 @@ logging.getLogger("telegram.request").setLevel(logging.WARNING)
 def format_exc(e: Exception) -> str:
     return f"{type(e).__name__}: {e}"
 
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMINS
+
+def is_allowed(update: Update) -> bool:
+    return update.effective_chat.id == CHAT_ID or is_admin(update.effective_user.id)
 # --------------------
 # Handlers
 # --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Привет! Я Telegram-ассистент с поддержкой текста и голосовых сообщений.\n\n"
-        "Команды:\n"
-        "/model <name> — сменить модель (gpt-4o, gpt-3.5-turbo, ...)\n"
-        "/quota — показать остаток бюджета OpenAI API\n"
-        "/help — помощь"
-    )
+    if not is_allowed(update):
+        return
+    user_id = update.effective_user.id
+    base = "Привет! Я Telegram-ассистент с поддержкой текста и голосовых сообщений.\n\n"
+    common_cmds = "Команды:\n/start — приветствие\n/help — помощь"
+    if is_admin(user_id):
+        extra = "\n/model <name> — сменить модель\n/quota — показать остаток бюджета OpenAI API"
+        await update.message.reply_text(base + common_cmds + extra)
+    else:
+        await update.message.reply_text(base + common_cmds)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Доступные команды:\n"
-        "/start — приветствие\n"
-        "/model <name> — сменить модель (например: /model gpt-3.5-turbo)\n"
-        "/quota — показать остаток бюджета OpenAI API\n\n"
-        "Просто пришлите текст или голосовое сообщение — я отвечу 🙂"
-    )
+    if not is_allowed(update):
+         return
+    user_id = update.effective_user.id
+    base = "Доступные команды:\n/start — приветствие\n/help — помощь"
+    if is_admin(user_id):
+        extra = "\n/model <name> — сменить модель\n/quota — показать остаток бюджета OpenAI API"
+        await update.message.reply_text(base + extra)
+    else:
+        await update.message.reply_text(base)
 
 async def set_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("🚫 У вас нет прав на смену модели.")
+        return
+    
     global current_model
     if not context.args:
         await update.message.reply_text(
@@ -85,6 +106,12 @@ async def set_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Модель установлена: {current_model}")
 
 async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("🚫 У вас нет прав на смену модели.")
+        return
     """Показывает остаток средств по API. Может не работать для некоторых аккаунтов."""
     try:
         headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
@@ -112,6 +139,8 @@ async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка при получении квоты: {format_exc(e)}")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
     user_input = update.message.text
     user = update.effective_user
 
@@ -126,6 +155,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {format_exc(e)}")
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
     user = update.effective_user
     logging.info(f"[{user.id}] @{user.username or 'no_username'} - VOICE: получено голосовое сообщение")
     try:
@@ -159,6 +190,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка при обработке голосового: {format_exc(e)}")
 
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
     user = update.effective_user
     kind = type(update.message.effective_attachment)
     caption = update.message.caption or "(без подписи)"
