@@ -162,7 +162,7 @@ async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user
     kind = type(update.message.effective_attachment)
 
-    logging.info(f"[{user.id}] @{user.username or 'no_username'} - UNSUPPORTED: {kind}")
+    logging.info(f"[{user.id}] @{user.username or 'no_username'} - UNSUPPORTED: {kind[0]}")
     await update.message.reply_text("❌ Извините, я пока не умею обрабатывать файлы, изображения или вложения.")
 
 
