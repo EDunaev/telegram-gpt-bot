@@ -24,7 +24,7 @@ load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # можно переопределить через .env
+DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # можно переопределить через .env
 
 if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
     raise RuntimeError("TELEGRAM_TOKEN или OPENAI_API_KEY не заданы в .env")
@@ -66,7 +66,7 @@ def is_allowed(update: Update) -> bool:
     text = update.message.text or update.message.caption or ""
     logging.info(f"[{user_id}] - chat_id: {chat.id} - type: {chat.type} - Text: {text}")
  # Если пользователь — админ, всегда разрешаем
-    if user_id in ADMINS:
+    if chat.type == "private" and user_id in ADMINS:
         return True
 
     if chat.id == CHAT_ID and chat.type in ("group", "supergroup"):
