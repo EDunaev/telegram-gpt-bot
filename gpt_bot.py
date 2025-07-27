@@ -69,7 +69,7 @@ def is_allowed(update: Update) -> bool:
 
     if chat.id == CHAT_ID and chat.type in ("group", "supergroup"):
         text = update.message.text or update.message.caption or ""
-        return f"@{BOT_USERNAME.lower()}" in text.lower()
+        return f"{BOT_USERNAME.lower()}" in text.lower()
 # --------------------
 # Handlers
 # --------------------
