@@ -161,8 +161,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     kind = type(update.message.effective_attachment)
+    caption = update.message.caption or "(без подписи)"
 
-    logging.info(f"[{user.id}] @{user.username or 'no_username'} - UNSUPPORTED: {kind[0]}")
+    logging.info(f"[{user.id}] @{user.username or 'no_username'} - UNSUPPORTED: {kind} - Caption: {caption}")
     await update.message.reply_text("❌ Извините, я пока не умею обрабатывать файлы, изображения или вложения.")
 
 
