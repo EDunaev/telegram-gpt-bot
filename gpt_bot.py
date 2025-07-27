@@ -15,6 +15,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from telegram.ext.filters import Document
 
 # --------------------
 # Env & clients
@@ -173,7 +174,7 @@ def main():
     # Сообщения
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.DOCUMENT.ALL | filters.VIDEO | filters.VOICE, handle_unsupported))
+    app.add_handler(MessageHandler(filters.PHOTO | Document.ALL | filters.VIDEO | filters.VOICE, handle_unsupported))
 
     print(f"GPT-бот запущен! Текущая модель: {current_model}")
     app.run_polling()
