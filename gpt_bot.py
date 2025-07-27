@@ -234,12 +234,13 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO | Document.ALL | filters.VIDEO, handle_unsupported))
-    me = app.bot.get_me()
-    logging.info("Bot username:", me.username)
+
  
 
     logging.info(f"GPT-бот запущен! Текущая модель: {current_model}")
     app.run_polling()
+    me = app.bot.get_me()
+    logging.info("Bot username:", me.username)
 
 if __name__ == "__main__":
     main()
