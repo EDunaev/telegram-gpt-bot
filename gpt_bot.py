@@ -62,7 +62,7 @@ def is_admin(user_id: int) -> bool:
 def is_allowed(update: Update) -> bool:
     user_id = update.effective_user.id
     chat = update.effective_chat
-
+    logging.info(f"[{user_id}] - chat: {chat} - Text: {text.lower}")
  # Если пользователь — админ, всегда разрешаем
     if user_id in ADMINS:
         return True
