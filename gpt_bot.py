@@ -72,6 +72,8 @@ def is_allowed(update: Update) -> bool:
     if chat.id == CHAT_ID and chat.type in ("group", "supergroup"):
         text = update.message.text or update.message.caption or ""
         return BOT_USERNAME.lower() in text.lower() if text else False
+    
+    return False
 # --------------------
 # Handlers
 # --------------------
@@ -153,7 +155,8 @@ async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
-    user_input = update.message.text
+    text = update.message.text or ""
+    user_input = text.replace(f"@{BOT_USERNAME}", "").strip()
     user = update.effective_user
 
     logging.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
