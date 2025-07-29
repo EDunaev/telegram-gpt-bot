@@ -14,6 +14,7 @@ from telegram.ext import (
     filters,
 )
 from telegram.ext.filters import Document
+from collections import defaultdict, deque
 
 # переменные инициализируются позже
 TELEGRAM_TOKEN = None
@@ -26,6 +27,7 @@ ADMINS = {1091992386, 1687504544}
 LIMITED_USERS = {111111111, 222222222, 333333333} 
 CHAT_ID = -1001785925671
 BOT_USERNAME = "DunaevAssistentBot"
+chat_history = defaultdict(lambda: deque(maxlen=100))
 
 logging.basicConfig(
     filename="bot.log",
@@ -167,14 +169,35 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or ""
     user_input = text.replace(f"@{BOT_USERNAME}", "").strip()
     user = update.effective_user
+    user_id = user.id
+    chat = update.effective_chat
+    chat_id = chat.id
+    key = f"{chat_id}:{user_id}"
 
     logging.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
     try:
-        resp = client.chat.completions.create(
-            model=current_model,
-            messages=[{"role": "user", "content": user_input}],
-        )
-        await update.message.reply_text(resp.choices[0].message.content)
+        if chat.type == "private" and user_id in ADMINS:
+            # Контекстный диалог — только для админов в приватном чате
+            history = chat_history[key]
+            history.append({"role": "user", "content": user_input})
+
+            messages = list(history)
+            resp = client.chat.completions.create(
+                model=current_model,
+                messages=messages,
+            )
+            answer = resp.choices[0].message.content
+            history.append({"role": "assistant", "content": answer})
+        else:
+            # Без контекста
+            messages = [{"role": "user", "content": user_input}]
+            resp = client.chat.completions.create(
+                model=current_model,
+                messages=messages,
+            )
+            answer = resp.choices[0].message.content
+
+        await update.message.reply_text(answer)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {format_exc(e)}")
 
