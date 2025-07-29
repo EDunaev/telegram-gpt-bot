@@ -73,16 +73,21 @@ def is_admin(user_id: int) -> bool:
 def is_allowed(update: Update) -> bool:
     user_id = update.effective_user.id
     chat = update.effective_chat
+    message = update.message
 
-    text = update.message.text or update.message.caption or ""
+    text = message.text or message.caption or ""
     logging.info(f"[{user_id}] - chat_id: {chat.id} - type: {chat.type} - Text: {text}")
  # Если пользователь — админ, всегда разрешаем
     if chat.type == "private" and user_id in ADMINS:
         return True
 
     if chat.id == CHAT_ID and chat.type in ("group", "supergroup"):
-        text = update.message.text or update.message.caption or ""
-        return BOT_USERNAME.lower() in text.lower() if text else False
+        # 1. Упоминание
+        if BOT_USERNAME.lower() in text.lower():
+            return True
+        # 2. Ответ на сообщение бота
+        if message.reply_to_message and message.reply_to_message.from_user.username == BOT_USERNAME:
+            return True
     
     return False
 # --------------------
@@ -166,40 +171,33 @@ async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
-    text = update.message.text or ""
-    user_input = text.replace(f"@{BOT_USERNAME}", "").strip()
-    user = update.effective_user
-    user_id = user.id
+    message = update.message
     chat = update.effective_chat
-    chat_id = chat.id
-    key = f"{chat_id}:{user_id}"
+    user_input = message.text or ""
+    user_input = user_input.replace(f"@{BOT_USERNAME}", "").strip()
+    user = update.effective_user
+
+    messages = []
+
+    # 💬 Если это reply на сообщение бота с текстом — добавим как контекст
+    if chat.type in ("group", "supergroup") and message.reply_to_message:
+        reply_msg = message.reply_to_message
+        if reply_msg.from_user and reply_msg.from_user.username == BOT_USERNAME:
+            prev_text = reply_msg.text or ""
+            if prev_text:
+                messages.append({"role": "user", "content": prev_text})
+
+    messages.append({"role": "user", "content": user_input})
 
     logging.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
     try:
-        if chat.type == "private" and user_id in ADMINS:
-            # Контекстный диалог — только для админов в приватном чате
-            history = chat_history[key]
-            history.append({"role": "user", "content": user_input})
-
-            messages = list(history)
-            resp = client.chat.completions.create(
-                model=current_model,
-                messages=messages,
-            )
-            answer = resp.choices[0].message.content
-            history.append({"role": "assistant", "content": answer})
-        else:
-            # Без контекста
-            messages = [{"role": "user", "content": user_input}]
-            resp = client.chat.completions.create(
-                model=current_model,
-                messages=messages,
-            )
-            answer = resp.choices[0].message.content
-
-        await update.message.reply_text(answer)
+        resp = client.chat.completions.create(
+            model=current_model,
+            messages=messages,
+        )
+        await message.reply_text(resp.choices[0].message.content)
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {format_exc(e)}")
+        await message.reply_text(f"❌ Ошибка: {format_exc(e)}")
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
