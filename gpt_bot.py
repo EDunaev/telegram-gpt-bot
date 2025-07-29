@@ -3,10 +3,8 @@ import os
 import tempfile
 import requests
 import logging
-from datetime import datetime
 from pydub import AudioSegment
 from dotenv import load_dotenv
-from openai import OpenAI
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -17,21 +15,14 @@ from telegram.ext import (
 )
 from telegram.ext.filters import Document
 
-# --------------------
-# Env & clients
-# --------------------
-load_dotenv()
+# переменные инициализируются позже
+TELEGRAM_TOKEN = None
+OPENAI_API_KEY = None
+DEFAULT_MODEL = None
+client = None
+current_model = None
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # можно переопределить через .env
-
-if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
-    raise RuntimeError("TELEGRAM_TOKEN или OPENAI_API_KEY не заданы в .env")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
-current_model = DEFAULT_MODEL  # будет изменяться командой /model
-ADMINS = {1091992386, 1687504544}  # ← замени на реальные user.id админов
+ADMINS = {1091992386, 1687504544} 
 LIMITED_USERS = {111111111, 222222222, 333333333} 
 CHAT_ID = -1001785925671
 BOT_USERNAME = "DunaevAssistentBot"
@@ -45,14 +36,32 @@ logging.basicConfig(
 
 # 🔇 Отключаем лишние логи от сторонних библиотек
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("telegram.bot").setLevel(logging.WARNING)
+logging.getLogger("telegram.bot").setLevel(logging.INFO)
 logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext._updater").setLevel(logging.WARNING)
-logging.getLogger("telegram.request").setLevel(logging.WARNING)
+logging.getLogger("telegram.request").setLevel(logging.INFO)
 
 # --------------------
 # Helpers
 # --------------------
+def init_env():
+    global TELEGRAM_TOKEN, OPENAI_API_KEY, DEFAULT_MODEL, client, current_model
+    
+    # --------------------
+    # Env & clients
+    # --------------------
+    load_dotenv()
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # можно переопределить через .env
+
+    if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
+        raise RuntimeError("TELEGRAM_TOKEN или OPENAI_API_KEY не заданы в .env")
+
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    current_model = DEFAULT_MODEL
+
 def format_exc(e: Exception) -> str:
     return f"{type(e).__name__}: {e}"
 
@@ -224,6 +233,7 @@ async def debug_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Main
 # --------------------
 def main():
+    init_env()
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     # Команды
