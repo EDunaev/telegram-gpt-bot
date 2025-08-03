@@ -22,7 +22,7 @@ OPENAI_API_KEY = None
 DEFAULT_MODEL = None
 client = None
 current_model = None
-messages = []
+user_histories = {}
 
 ADMINS = {1091992386, 1687504544} 
 LIMITED_USERS = {111111111, 222222222, 333333333} 
@@ -177,7 +177,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = message.text or ""
     user_input = user_input.replace(f"@{BOT_USERNAME}", "").strip()
     user = update.effective_user
+    user_id = user.id
 
+    messages = []
 
     # 💬 Если это reply на сообщение бота с текстом — добавим как контекст
     if chat.type in ("group", "supergroup") and message.reply_to_message:
@@ -186,7 +188,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prev_text = reply_msg.text or ""
             if prev_text:
                 messages.append({"role": "user", "content": prev_text})
-
+    
+    if chat.type == "private":
+        if user_id not in user_histories:
+            user_histories[user_id] = []
+        messages = user_histories[user_id]
+        messages.append({"role": "user", "content": user_input})
+        
     messages.append({"role": "user", "content": user_input})
 
     logging.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
@@ -250,6 +258,12 @@ async def debug_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.exception("Failed to log raw update: %s", e)
 
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if update.effective_chat.type == "private":
+        user_histories.pop(user_id, None)
+        await update.message.reply_text("🧹 Контекст очищен.")
+
 # --------------------
 # Main
 # --------------------
@@ -262,6 +276,7 @@ def main():
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("model", set_model))
     app.add_handler(CommandHandler("quota", quota))
+    app.add_handler(CommandHandler("reset", reset))
 
     # Сообщения
     #app.add_handler(MessageHandler(filters.ALL, debug_log), group=0)
