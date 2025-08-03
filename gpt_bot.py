@@ -22,6 +22,7 @@ OPENAI_API_KEY = None
 DEFAULT_MODEL = None
 client = None
 current_model = None
+messages = []
 
 ADMINS = {1091992386, 1687504544} 
 LIMITED_USERS = {111111111, 222222222, 333333333} 
@@ -177,7 +178,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = user_input.replace(f"@{BOT_USERNAME}", "").strip()
     user = update.effective_user
 
-    messages = []
 
     # 💬 Если это reply на сообщение бота с текстом — добавим как контекст
     if chat.type in ("group", "supergroup") and message.reply_to_message:
