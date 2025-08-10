@@ -34,7 +34,7 @@ current_model = None
 user_histories = defaultdict(lambda: deque(maxlen=100))
 
 _BAD_DOMAINS = {
-    "google.com", "support.google.com", "policies.google.com",
+     "support.google.com", "policies.google.com",
     "accounts.google.com", "blog.google", "chrome.google.com"
 }
 
