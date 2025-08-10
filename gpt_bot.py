@@ -314,23 +314,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 2) ПРИВАТНЫЕ ЧАТЫ: индивидуальный контекст ТОЛЬКО для админов
     if chat.type == "private" and user_id in ADMINS:
-        history = user_histories[user_id]
-        # history уже deque(maxlen=100); копию отдаём в GPT
-        messages.extend(list(history))
-        # добавляем текущий юзерский запрос (один раз!)
+        history = user_histories[user_id]          # defaultdict — KeyError не будет
+        messages.extend(list(history))             # отдаём историю в GPT
         messages.append({"role": "user", "content": user_input})
     else:
-        # без истории
         messages.append({"role": "user", "content": user_input})
 
     try:
-        # 3) Умное решение: нужен ли веб-поиск
+        # 3) Умное решение: нужен ли веб‑поиск
         if should_web_search(user_input):
             raw_results = google_search(user_input, num_results=8, date_restrict="m6")
             answer_text = summarize_search_results(user_input, raw_results)
         else:
             # обычный ответ GPT (без интернета)
-            resp = client.chat_completions.create(  # <= если у тебя openai>=1.x, корректно: client.chat.completions.create
+            resp = client.chat.completions.create(   # <-- исправленный вызов
                 model=current_model,
                 messages=messages
             )
@@ -339,49 +336,70 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 4) Отправляем ответ
         await message.reply_text(answer_text)
 
-        # 5) Если приватка с админом — дописываем И ответ ассистента в историю
+        # 5) Если приватка с админом — сохраним и ответ ассистента
         if chat.type == "private" and user_id in ADMINS:
             history = user_histories[user_id]
-            # добавляем последние две реплики в историю: user + assistant
-            # (user уже добавили выше, добавим assistant)
             history.append({"role": "assistant", "content": answer_text})
 
     except Exception as e:
         logging.exception("handle_text error")
         await message.reply_text(f"❌ Ошибка: {format_exc(e)}")
 
-
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
+
     user = update.effective_user
+    chat = update.effective_chat
+    user_id = user.id
+
     logging.info(f"[{user.id}] @{user.username or 'no_username'} - VOICE: получено голосовое сообщение")
     try:
+        # 1. Скачиваем голосовое
         voice_file = await update.message.voice.get_file()
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
             await voice_file.download_to_drive(f.name)
             ogg_path = f.name
 
+        # 2. Конвертируем в wav
         wav_path = ogg_path.replace(".ogg", ".wav")
         AudioSegment.from_ogg(ogg_path).export(wav_path, format="wav")
 
-        # Распознаём речь (Whisper)
+        # 3. Распознаём речь (Whisper)
         with open(wav_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
             )
-        text = transcript.text
+
+        text = transcript.text.strip()
         logging.info(f"{user} - VOICE TEXT: {text}")
 
-        # Отвечаем LLM-ом
+        # 4. Формируем сообщения для GPT
+        messages = []
+        if chat.type == "private" and user_id in ADMINS:
+            history = user_histories[user_id]
+            messages.extend(list(history))
+            messages.append({"role": "user", "content": text})
+        else:
+            messages.append({"role": "user", "content": text})
+
+        # 5. Отвечаем GPT
         resp = client.chat.completions.create(
             model=current_model,
-            messages=[{"role": "user", "content": text}],
+            messages=messages,
         )
+        answer_text = resp.choices[0].message.content
+
+        # 6. Отправляем ответ
         await update.message.reply_text(
-            f"🗣️ Ты сказал: {text}\n\n🤖 {resp.choices[0].message.content}"
+            f"🗣️ Ты сказал: {text}\n\n🤖 {answer_text}"
         )
+
+        # 7. Сохраняем историю для админов в приватке
+        if chat.type == "private" and user_id in ADMINS:
+            history.append({"role": "assistant", "content": answer_text})
+
     except Exception as e:
         logging.error(f"{user} - VOICE ERROR: {str(e)}")
         await update.message.reply_text(f"❌ Ошибка при обработке голосового: {format_exc(e)}")
