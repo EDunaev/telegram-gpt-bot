@@ -19,6 +19,7 @@ from telegram.ext import (
 from telegram.ext.filters import Document
 from collections import defaultdict, deque
 from telegram.ext import CommandHandler
+from typing import List
 
 # переменные инициализируются позже
 TELEGRAM_TOKEN = None
@@ -100,37 +101,100 @@ def is_allowed(update: Update) -> bool:
     
     return False
 
-def google_search(query: str, num_results: int = 5):
+def should_web_search(user_input: str) -> bool:
     """
-    Выполняет поиск в Google с помощью Custom Search API.
-    
-    :param query: строка поиска
-    :param num_results: сколько результатов вернуть (1-10)
-    :return: список строк "Заголовок - Ссылка"
+    Быстрый и дешёвый детектор намерения идти в веб:
+    1) Жёсткие триггеры по ключевым словам (надёжно, 0$)
+    2) (опц.) LLM-детектор — раскомментируй блок ниже
     """
-    if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
-        raise RuntimeError("Google API ключ или CX не заданы в .env")
+    kw = [
+        "новост", "актуаль", "что произошло", "что сейчас",
+        "свеж", "google", "погугли", "поиск", "найди",
+        "сколько стоит", "цена", "курс", "сегодня", "сейчас",
+        "расписание", "когда выйдет", "релиз", "обновлен"
+    ]
+    low = user_input.lower()
+    if any(k in low for k in kw):
+        return True
+
+    # --- Опционально: уточняем у LLM (удорожает запрос) ---
+    # decision_prompt = (
+    #     "Определи, нужен ли интернет-поиск. Ответь ровно 'YES' или 'NO'.\n"
+    #     f"Запрос: {user_input}"
+    # )
+    # try:
+    #     decision = client.chat.completions.create(
+    #         model=current_model,
+    #         messages=[{"role": "user", "content": decision_prompt}],
+    #         max_tokens=3
+    #     ).choices[0].message.content.strip().upper()
+    #     return decision == "YES"
+    # except Exception:
+    #     return False
+
+    return False
+
+def google_search(query: str, num_results: int = 5) -> List[dict]:
+    """
+    Возвращает структурированный список: [{title, link, snippet}]
+    Требуются GOOGLE_CSE_API_KEY и GOOGLE_CSE_CX в .env
+    """
+    from dotenv import load_dotenv
+    load_dotenv()
+    api_key = os.getenv("GOOGLE_CSE_API_KEY")
+    cx = os.getenv("GOOGLE_CSE_CX")
+    if not api_key or not cx:
+        raise RuntimeError("Google CSE ключи не заданы (GOOGLE_CSE_API_KEY / GOOGLE_CSE_CX).")
 
     url = "https://www.googleapis.com/customsearch/v1"
-    params = {
-        "key": GOOGLE_CSE_API_KEY,
-        "cx": GOOGLE_CSE_CX,
-        "q": query,
-        "num": num_results
-    }
+    params = {"key": api_key, "cx": cx, "q": query, "num": num_results}
 
-    resp = requests.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+    r = requests.get(url, params=params, timeout=15)
+    r.raise_for_status()
+    data = r.json()
 
-    results = []
-    for item in data.get("items", []):
-        title = item.get("title", "Без названия")
-        link = item.get("link", "")
-        snippet = item.get("snippet", "")
-        results.append(f"{title}\n{snippet}\n{link}")
+    items = []
+    for it in data.get("items", []):
+        items.append({
+            "title": it.get("title", "Без названия"),
+            "link": it.get("link", ""),
+            "snippet": it.get("snippet", "")
+        })
+    return items
 
-    return results
+def summarize_search_results(query: str, results: List[dict]) -> str:
+    """
+    Кормим результаты в GPT и просим чистое краткое резюме без воды + ссылки.
+    """
+    # Соберём компактный текст для анализа
+    lines = []
+    for i, it in enumerate(results, 1):
+        lines.append(f"{i}. {it['title']}\n{it['snippet']}\n{it['link']}")
+    corpus = "\n\n".join(lines)
+
+    system_prompt = (
+        "Ты новостной и веб-аналитик. У тебя НЕТ доступа в интернет; "
+        "анализируй только предоставленные сниппеты и ссылки. "
+        "Сделай краткое, структурированное резюме (3–6 пунктов), "
+        "убери рекламу, дубликаты и воду, не выдумывай факты. "
+        "В конце дай список 2–4 релевантных ссылок для углубления."
+    )
+    user_prompt = (
+        f"Запрос пользователя: {query}\n\n"
+        f"Результаты поиска (заголовок / сниппет / ссылка):\n\n{corpus}"
+    )
+
+    resp = client.chat.completions.create(
+        model=current_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        temperature=0.3
+    )
+    return resp.choices[0].message.content
+
+
 # --------------------
 # Handlers
 # --------------------
@@ -212,40 +276,70 @@ async def quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
+
     message = update.message
     chat = update.effective_chat
-    user_input = message.text or ""
-    user_input = user_input.replace(f"@{BOT_USERNAME}", "").strip()
     user = update.effective_user
     user_id = user.id
 
+    raw_text = message.text or ""
+    user_input = raw_text.replace(f"@{BOT_USERNAME}", "").strip()
+
+    logging.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
+
+    # База для сообщений в OpenAI
     messages = []
 
-    # 💬 Если это reply на сообщение бота с текстом — добавим как контекст
+    # 1) ГРУППЫ: если это reply на сообщение бота — добавим предыдущий ответ как контекст
     if chat.type in ("group", "supergroup") and message.reply_to_message:
         reply_msg = message.reply_to_message
         if reply_msg.from_user and reply_msg.from_user.username == BOT_USERNAME:
             prev_text = reply_msg.text or ""
             if prev_text:
                 messages.append({"role": "user", "content": prev_text})
-    
-    if chat.type == "private":
-        if user_id not in user_histories:
-            user_histories[user_id] = []
-        messages = user_histories[user_id]
-        messages.append({"role": "user", "content": user_input})
-        
-    messages.append({"role": "user", "content": user_input})
 
-    logging.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
+    # 2) ПРИВАТНЫЕ ЧАТЫ: индивидуальный контекст ТОЛЬКО для админов
+    if chat.type == "private" and user_id in ADMINS:
+        history = user_histories[user_id]
+        # history уже deque(maxlen=10); копию отдаём в GPT
+        messages.extend(list(history))
+        # добавляем текущий юзерский запрос (один раз!)
+        messages.append({"role": "user", "content": user_input})
+    else:
+        # без истории
+        messages.append({"role": "user", "content": user_input})
+
     try:
-        resp = client.chat.completions.create(
-            model=current_model,
-            messages=messages,
-        )
-        await message.reply_text(resp.choices[0].message.content)
+        # 3) Умное решение: нужен ли веб-поиск
+        if should_web_search(user_input):
+            results = google_search(user_input, num_results=5)
+            if results:
+                summary = summarize_search_results(user_input, results)
+                answer_text = summary
+            else:
+                answer_text = "Ничего релевантного не нашёл по запросу."
+        else:
+            # обычный ответ GPT (без интернета)
+            resp = client.chat_completions.create(  # <= если у тебя openai>=1.x, корректно: client.chat.completions.create
+                model=current_model,
+                messages=messages
+            )
+            answer_text = resp.choices[0].message.content
+
+        # 4) Отправляем ответ
+        await message.reply_text(answer_text)
+
+        # 5) Если приватка с админом — дописываем И ответ ассистента в историю
+        if chat.type == "private" and user_id in ADMINS:
+            history = user_histories[user_id]
+            # добавляем последние две реплики в историю: user + assistant
+            # (user уже добавили выше, добавим assistant)
+            history.append({"role": "assistant", "content": answer_text})
+
     except Exception as e:
+        logging.exception("handle_text error")
         await message.reply_text(f"❌ Ошибка: {format_exc(e)}")
+
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
