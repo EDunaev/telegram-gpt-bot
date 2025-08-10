@@ -162,35 +162,49 @@ def google_search(query: str, num_results: int = 5) -> List[dict]:
         })
     return items
 
-def summarize_search_results(query: str, results: List[dict]) -> str:
+def summarize_search_results(user_query: str, results: list) -> str:
     """
-    Кормим результаты в GPT и просим чистое краткое резюме без воды + ссылки.
+    GPT сам решает: что показать, как структурировать и какие источники использовать.
+    Мы лишь передаём сырые результаты (title/snippet/link), без предварительной фильтрации.
     """
-    # Соберём компактный текст для анализа
-    lines = []
+    if not results:
+        return "Ничего не нашёл по запросу."
+
+    # Сжато передаём сниппеты в модель
+    blocks = []
     for i, it in enumerate(results, 1):
-        lines.append(f"{i}. {it['title']}\n{it['snippet']}\n{it['link']}")
-    corpus = "\n\n".join(lines)
+        title = it.get("title", "Без названия")
+        snippet = it.get("snippet", "")
+        link = it.get("link", "")
+        blocks.append(f"{i}. {title}\n{snippet}\n{link}")
+    corpus = "\n\n".join(blocks)
 
     system_prompt = (
-        "Ты новостной и веб-аналитик. У тебя НЕТ доступа в интернет; "
-        "анализируй только предоставленные сниппеты и ссылки. "
-        "Сделай краткое, структурированное резюме (3–6 пунктов), "
-        "убери рекламу, дубликаты и воду, не выдумывай факты. "
-        "В конце дай список 2–4 релевантных ссылок для углубления."
+        "Ты ассистент‑аналитик результатов веб‑поиска. У тебя НЕТ прямого доступа в интернет; "
+        "используй ТОЛЬКО предоставленные сниппеты и ссылки как факты. "
+        "Задача: на основе вопроса пользователя САМ выбери, что важно показать и в каком формате.\n\n"
+        "Правила принятия решения:\n"
+        "• Пойми тип вопроса: новости/сводка, сравнение/«какой актуальный», определение, how‑to и т.п.\n"
+        "• Структуру и объём ответа подбери под задачу: краткий прямой ответ; либо 3–6 пунктов; либо краткий обзор.\n"
+        "• Убирай нерелевантные и рекламные результаты; не повторяй одно и то же.\n"
+        "• Ничего не придумывай сверх сниппетов. Если данных недостаточно — задай 1 уточняющий вопрос.\n"
+        "• В конце добавь раздел «Источники» с 2–4 ССЫЛКАМИ, которые ты действительно использовал."
     )
+
     user_prompt = (
-        f"Запрос пользователя: {query}\n\n"
-        f"Результаты поиска (заголовок / сниппет / ссылка):\n\n{corpus}"
+        f"Вопрос пользователя: «{user_query}».\n\n"
+        f"Ниже результаты поиска (заголовок / сниппет / ссылка). "
+        f"САМ выбери, что показать и в каком формате, чтобы лучше ответить на вопрос.\n\n"
+        f"{corpus}"
     )
 
     resp = client.chat.completions.create(
         model=current_model,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user",   "content": user_prompt}
         ],
-        temperature=0.3
+        temperature=0.2
     )
     return resp.choices[0].message.content
 
@@ -312,12 +326,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # 3) Умное решение: нужен ли веб-поиск
         if should_web_search(user_input):
-            results = google_search(user_input, num_results=5)
-            if results:
-                summary = summarize_search_results(user_input, results)
-                answer_text = summary
-            else:
-                answer_text = "Ничего релевантного не нашёл по запросу."
+            raw_results = google_search(user_input, num_results=8, date_restrict="m6")
+            answer_text = summarize_search_results(user_input, raw_results)
         else:
             # обычный ответ GPT (без интернета)
             resp = client.chat_completions.create(  # <= если у тебя openai>=1.x, корректно: client.chat.completions.create
