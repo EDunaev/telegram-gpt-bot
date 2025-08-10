@@ -31,7 +31,7 @@ GOOGLE_CSE_API_KEY = None
 GOOGLE_CSE_CX = None
 client = None
 current_model = None
-user_histories = defaultdict(lambda: deque(maxlen=100))
+user_histories = defaultdict(lambda: deque(maxlen=5))
 
 _BAD_DOMAINS = {
      "support.google.com", "policies.google.com",
@@ -42,7 +42,7 @@ ADMINS = {1091992386, 1687504544}
 LIMITED_USERS = {111111111, 222222222, 333333333} 
 CHAT_ID = -1001785925671
 BOT_USERNAME = "DunaevAssistentBot"
-chat_history = defaultdict(lambda: deque(maxlen=100))
+chat_history = defaultdict(lambda: deque(maxlen=5))
 
 logging.basicConfig(
     filename="bot.log",
@@ -130,35 +130,54 @@ def should_web_search(user_input: str) -> bool:
     except Exception:
          return False
 
-def google_search(query: str, num_results: int = 8, date_restrict: str | None = "m6"):
-    """
-    Поиск по Google CSE:
-    - язык RU, safe search, ограничение свежести через dateRestrict (пример: 'm6' = 6 месяцев)
-    - отбрасываем собственные домены Google, чтобы не засорять выдачу
-    Возвращает: [{title, link, snippet}]
-    """
-    if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
-        raise RuntimeError("Google CSE ключи не заданы (GOOGLE_CSE_API_KEY / GOOGLE_CSE_CX).")
+import os, requests, logging
+from urllib.parse import urlparse
+from dotenv import load_dotenv
 
+load_dotenv()
+GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+GOOGLE_CSE_CX  = os.getenv("GOOGLE_CSE_CX") or os.getenv("GOOGLE_CSE_ID")
+
+_BAD_DOMAINS = {
+    "google.com", "support.google.com", "policies.google.com",
+    "accounts.google.com", "blog.google", "chrome.google.com"
+}
+
+def _is_bad_domain(url: str) -> bool:
+    try:
+        host = urlparse(url).netloc.lower()
+        return any(host.endswith(d) for d in _BAD_DOMAINS)
+    except Exception:
+        return False
+
+def _one_call(query: str, num: int, lr: str | None, date_restrict: str | None):
+    """Один вызов CSE + аккуратные логи."""
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
         "key": GOOGLE_CSE_API_KEY,
         "cx": GOOGLE_CSE_CX,
         "q": query,
-        "num": max(1, min(num_results, 10)),
-        "hl": "ru",
-        "lr": "lang_ru",
+        "num": max(1, min(num, 10)),
         "safe": "active",
+        "hl": "ru",
     }
+    if lr:
+        params["lr"] = lr        # например, lang_ru
     if date_restrict:
-        params["dateRestrict"] = date_restrict  # d7 / w4 / m6 / y1 и т.п.
+        params["dateRestrict"] = date_restrict  # m6 / y1 / w4 / d7
 
-    r = requests.get(url, params=params, timeout=15)
-    r.raise_for_status()
-    data = r.json()
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        if r.status_code != 200:
+            logging.error("CSE HTTP %s: %s", r.status_code, r.text[:500])
+            return []
+        data = r.json()
+    except Exception as e:
+        logging.exception("CSE request error: %s", e)
+        return []
 
     items = []
-    for it in data.get("items", []):
+    for it in data.get("items", []) or []:
         link = it.get("link", "")
         if not link or _is_bad_domain(link):
             continue
@@ -167,6 +186,71 @@ def google_search(query: str, num_results: int = 8, date_restrict: str | None = 
             "link": link,
             "snippet": it.get("snippet", "")
         })
+    logging.info("CSE ok (lr=%s, date=%s): %d results", lr, date_restrict, len(items))
+    return items
+
+def google_search(query: str, num_results: int = 8, date_restrict: str | None = "m6"):
+    """
+    Устойчивый поиск: пробуем по очереди
+      1) lang_ru + dateRestrict
+      2) (если пусто) без lr (любой язык) + dateRestrict
+      3) (если пусто) без lr и без dateRestrict
+    """
+    if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
+        raise RuntimeError("Google CSE ключи не заданы (GOOGLE_CSE_API_KEY / GOOGLE_CSE_CX).")
+
+    # 1) узко: RU + свежесть
+    res = _one_call(query, num_results, lr="lang_ru", date_restrict=date_restrict)
+    if res:
+        return res
+
+    # 2) шире: любой язык + свежесть
+    res = _one_call(query, num_results, lr=None, date_restrict=date_restrict)
+    if res:
+        return res
+
+    # 3) максимально широко: любой язык, без ограничения свежести
+    res = _one_call(query, num_results, lr=None, date_restrict=None)
+    return res
+
+
+def _one_call(query: str, num: int, lr: str | None, date_restrict: str | None):
+    """Один вызов CSE + аккуратные логи."""
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": GOOGLE_CSE_API_KEY,
+        "cx": GOOGLE_CSE_CX,
+        "q": query,
+        "num": max(1, min(num, 10)),
+        "safe": "active",
+        "hl": "ru",
+    }
+    if lr:
+        params["lr"] = lr        # например, lang_ru
+    if date_restrict:
+        params["dateRestrict"] = date_restrict  # m6 / y1 / w4 / d7
+
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        if r.status_code != 200:
+            logging.error("CSE HTTP %s: %s", r.status_code, r.text[:500])
+            return []
+        data = r.json()
+    except Exception as e:
+        logging.exception("CSE request error: %s", e)
+        return []
+
+    items = []
+    for it in data.get("items", []) or []:
+        link = it.get("link", "")
+        if not link or _is_bad_domain(link):
+            continue
+        items.append({
+            "title": it.get("title", "Без названия"),
+            "link": link,
+            "snippet": it.get("snippet", "")
+        })
+    logging.info("CSE ok (lr=%s, date=%s): %d results", lr, date_restrict, len(items))
     return items
 
 def summarize_search_results(user_query: str, results: list) -> str:
@@ -334,8 +418,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # 3) Умное решение: нужен ли веб‑поиск
         if should_web_search(user_input):
+            logging.info("Запрос в интернете")
             raw_results = google_search(user_input, num_results=8, date_restrict="m6")
-            answer_text = summarize_search_results(user_input, raw_results)
+            logging.info("CSE raw count: %d", len(raw_results))
+            answer_text = summarize_search_results(user_input, raw_results) if raw_results else "Ничего не нашёл по запросу."
         else:
             # обычный ответ GPT (без интернета)
             resp = client.chat.completions.create(   # <-- исправленный вызов
