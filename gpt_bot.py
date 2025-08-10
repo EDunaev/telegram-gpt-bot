@@ -54,7 +54,7 @@ logging.getLogger("telegram.request").setLevel(logging.INFO)
 # Helpers
 # --------------------
 def init_env():
-    global TELEGRAM_TOKEN, OPENAI_API_KEY, DEFAULT_MODEL, client, current_model
+    global TELEGRAM_TOKEN, OPENAI_API_KEY, DEFAULT_MODEL, GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX, client, current_model
     
     # --------------------
     # Env & clients
