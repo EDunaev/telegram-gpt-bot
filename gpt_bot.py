@@ -20,6 +20,8 @@ from telegram.ext.filters import Document
 from collections import defaultdict, deque
 from telegram.ext import CommandHandler
 from typing import List
+from urllib.parse import urlparse
+from datetime import datetime
 
 # переменные инициализируются позже
 TELEGRAM_TOKEN = None
@@ -30,6 +32,11 @@ GOOGLE_CSE_CX = None
 client = None
 current_model = None
 user_histories = defaultdict(lambda: deque(maxlen=100))
+
+_BAD_DOMAINS = {
+    "google.com", "support.google.com", "policies.google.com",
+    "accounts.google.com", "blog.google", "chrome.google.com"
+}
 
 ADMINS = {1091992386, 1687504544} 
 LIMITED_USERS = {111111111, 222222222, 333333333} 
@@ -114,79 +121,85 @@ def should_web_search(user_input: str) -> bool:
              messages=[{"role": "user", "content": decision_prompt}],
              max_tokens=3
          ).choices[0].message.content.strip().upper()
-       return decision == "YES"
+       if (decision == "YES"):
+            logging.info("Запрос в интернете")
+            return True
+       else:
+           logging.info("Запрос обработается не в интернете")
+           return False
     except Exception:
          return False
 
-    return False
+def google_search(query: str, num_results: int = 8, date_restrict: str | None = "m6"):
+    """
+    Поиск по Google CSE:
+    - язык RU, safe search, ограничение свежести через dateRestrict (пример: 'm6' = 6 месяцев)
+    - отбрасываем собственные домены Google, чтобы не засорять выдачу
+    Возвращает: [{title, link, snippet}]
+    """
+    if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
+        raise RuntimeError("Google CSE ключи не заданы (GOOGLE_CSE_API_KEY / GOOGLE_CSE_CX).")
 
-def google_search(query, num_results=5, date_restrict=None):
-    import requests
-    from urllib.parse import urlencode
-
-    api_key = GOOGLE_CSE_API_KEY
-    cse_id = GOOGLE_CSE_CX
-    if not api_key or not cse_id:
-        raise RuntimeError("GOOGLE_API_KEY или GOOGLE_CSE_ID не заданы в .env")
-
+    url = "https://www.googleapis.com/customsearch/v1"
     params = {
+        "key": GOOGLE_CSE_API_KEY,
+        "cx": GOOGLE_CSE_CX,
         "q": query,
-        "key": api_key,
-        "cx": cse_id,
-        "num": num_results
+        "num": max(1, min(num_results, 10)),
+        "hl": "ru",
+        "lr": "lang_ru",
+        "safe": "active",
     }
-
     if date_restrict:
-        params["dateRestrict"] = date_restrict  # например, m6 — за последние 6 месяцев
+        params["dateRestrict"] = date_restrict  # d7 / w4 / m6 / y1 и т.п.
 
-    url = f"https://www.googleapis.com/customsearch/v1?{urlencode(params)}"
-    resp = requests.get(url)
-    resp.raise_for_status()
-    data = resp.json()
+    r = requests.get(url, params=params, timeout=15)
+    r.raise_for_status()
+    data = r.json()
 
-    results = []
-    for item in data.get("items", []):
-        results.append({
-            "title": item.get("title"),
-            "snippet": item.get("snippet"),
-            "link": item.get("link")
+    items = []
+    for it in data.get("items", []):
+        link = it.get("link", "")
+        if not link or _is_bad_domain(link):
+            continue
+        items.append({
+            "title": it.get("title", "Без названия"),
+            "link": link,
+            "snippet": it.get("snippet", "")
         })
-
-    return results
+    return items
 
 def summarize_search_results(user_query: str, results: list) -> str:
     """
-    GPT сам решает: что показать, как структурировать и какие источники использовать.
-    Мы лишь передаём сырые результаты (title/snippet/link), без предварительной фильтрации.
+    Отдаём GPT сырые результаты, просим САМОСТОЯТЕЛЬНО выбрать формат,
+    но жёстко требуем ориентироваться на свежесть и надёжность.
     """
     if not results:
         return "Ничего не нашёл по запросу."
 
-    # Сжато передаём сниппеты в модель
+    logging.info("CSE raw: %s", results)
     blocks = []
     for i, it in enumerate(results, 1):
-        title = it.get("title", "Без названия")
-        snippet = it.get("snippet", "")
-        link = it.get("link", "")
-        blocks.append(f"{i}. {title}\n{snippet}\n{link}")
+        blocks.append(f"{i}. {it['title']}\n{it['snippet']}\n{it['link']}")
     corpus = "\n\n".join(blocks)
+
+    today = datetime.utcnow().strftime("%Y-%m-%d")
 
     system_prompt = (
         "Ты ассистент‑аналитик результатов веб‑поиска. У тебя НЕТ прямого доступа в интернет; "
-        "используй ТОЛЬКО предоставленные сниппеты и ссылки как факты. "
-        "Задача: на основе вопроса пользователя САМ выбери, что важно показать и в каком формате.\n\n"
-        "Правила принятия решения:\n"
-        "• Пойми тип вопроса: новости/сводка, сравнение/«какой актуальный», определение, how‑to и т.п.\n"
-        "• Структуру и объём ответа подбери под задачу: краткий прямой ответ; либо 3–6 пунктов; либо краткий обзор.\n"
-        "• Убирай нерелевантные и рекламные результаты; не повторяй одно и то же.\n"
-        "• Ничего не придумывай сверх сниппетов. Если данных недостаточно — задай 1 уточняющий вопрос.\n"
-        "• В конце добавь раздел «Источники» с 2–4 ССЫЛКАМИ, которые ты действительно использовал."
+        "используй ТОЛЬКО предоставленные сниппеты и ссылки. "
+        f"Текущая дата: {today}. "
+        "Всегда предпочитай более свежую информацию и официальные/авторитетные источники "
+        "(например, страницы производителя, крупные профильные издания). "
+        "При противоречиях выбирай данные с более поздними годами/датами. "
+        "Не выдумывай фактов. Если данных не хватает — задай 1 короткий уточняющий вопрос."
     )
 
     user_prompt = (
         f"Вопрос пользователя: «{user_query}».\n\n"
-        f"Ниже результаты поиска (заголовок / сниппет / ссылка). "
-        f"САМ выбери, что показать и в каком формате, чтобы лучше ответить на вопрос.\n\n"
+        "Ниже результаты поиска (заголовок / сниппет / ссылка). "
+        "Сам выбери, что важно показать и в каком формате (прямой ответ; или 3–6 пунктов; или краткая выжимка). "
+        "В конце добавь раздел «Источники» с 2–4 наиболее релевантными ссылками.\n\n"
         f"{corpus}"
     )
 
@@ -200,6 +213,12 @@ def summarize_search_results(user_query: str, results: list) -> str:
     )
     return resp.choices[0].message.content
 
+def _is_bad_domain(url: str) -> bool:
+    try:
+        host = urlparse(url).netloc.lower()
+        return any(host.endswith(d) for d in _BAD_DOMAINS)
+    except Exception:
+        return False
 
 # --------------------
 # Handlers
