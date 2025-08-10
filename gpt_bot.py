@@ -124,8 +124,8 @@ def google_search(query, num_results=5, date_restrict=None):
     import requests
     from urllib.parse import urlencode
 
-    api_key = os.getenv("GOOGLE_API_KEY")
-    cse_id = os.getenv("GOOGLE_CSE_ID")
+    api_key = GOOGLE_CSE_API_KEY
+    cse_id = GOOGLE_CSE_CX
     if not api_key or not cse_id:
         raise RuntimeError("GOOGLE_API_KEY или GOOGLE_CSE_ID не заданы в .env")
 
