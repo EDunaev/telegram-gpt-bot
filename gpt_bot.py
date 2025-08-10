@@ -29,7 +29,7 @@ GOOGLE_CSE_API_KEY = None
 GOOGLE_CSE_CX = None
 client = None
 current_model = None
-user_histories = {}
+user_histories = defaultdict(lambda: deque(maxlen=100))
 
 ADMINS = {1091992386, 1687504544} 
 LIMITED_USERS = {111111111, 222222222, 333333333} 
@@ -301,7 +301,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 2) ПРИВАТНЫЕ ЧАТЫ: индивидуальный контекст ТОЛЬКО для админов
     if chat.type == "private" and user_id in ADMINS:
         history = user_histories[user_id]
-        # history уже deque(maxlen=10); копию отдаём в GPT
+        # history уже deque(maxlen=100); копию отдаём в GPT
         messages.extend(list(history))
         # добавляем текущий юзерский запрос (один раз!)
         messages.append({"role": "user", "content": user_input})
@@ -414,6 +414,8 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
         user_histories.pop(user_id, None)
         await update.message.reply_text("🧹 Контекст очищен.")
+async def error_handler(update, context):
+    logging.exception("Unhandled error: %s", context.error)
 
 # --------------------
 # Main
@@ -436,7 +438,7 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO | Document.ALL | filters.VIDEO, handle_unsupported))
 
- 
+    app.add_error_handler(error_handler)
 
     logging.info(f"GPT-бот запущен! Текущая модель: {current_model}")
     app.run_polling()
