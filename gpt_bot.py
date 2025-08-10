@@ -3,6 +3,9 @@ import os
 import tempfile
 import requests
 import logging
+import os
+import requests
+from dotenv import load_dotenv
 from pydub import AudioSegment
 from dotenv import load_dotenv
 from telegram import Update
@@ -15,11 +18,14 @@ from telegram.ext import (
 )
 from telegram.ext.filters import Document
 from collections import defaultdict, deque
+from telegram.ext import CommandHandler
 
 # переменные инициализируются позже
 TELEGRAM_TOKEN = None
 OPENAI_API_KEY = None
 DEFAULT_MODEL = None
+GOOGLE_CSE_API_KEY = None
+GOOGLE_CSE_CX = None
 client = None
 current_model = None
 user_histories = {}
@@ -56,7 +62,9 @@ def init_env():
     load_dotenv()
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")  # можно переопределить через .env
+    DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo") 
+    GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY")
+    GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX")
 
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
         raise RuntimeError("TELEGRAM_TOKEN или OPENAI_API_KEY не заданы в .env")
@@ -91,6 +99,38 @@ def is_allowed(update: Update) -> bool:
             return True
     
     return False
+
+def google_search(query: str, num_results: int = 5):
+    """
+    Выполняет поиск в Google с помощью Custom Search API.
+    
+    :param query: строка поиска
+    :param num_results: сколько результатов вернуть (1-10)
+    :return: список строк "Заголовок - Ссылка"
+    """
+    if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
+        raise RuntimeError("Google API ключ или CX не заданы в .env")
+
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": GOOGLE_CSE_API_KEY,
+        "cx": GOOGLE_CSE_CX,
+        "q": query,
+        "num": num_results
+    }
+
+    resp = requests.get(url, params=params, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+
+    results = []
+    for item in data.get("items", []):
+        title = item.get("title", "Без названия")
+        link = item.get("link", "")
+        snippet = item.get("snippet", "")
+        results.append(f"{title}\n{snippet}\n{link}")
+
+    return results
 # --------------------
 # Handlers
 # --------------------
@@ -252,6 +292,23 @@ async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE)
     logging.info(f"[{user.id}] @{user.username or 'no_username'} - UNSUPPORTED: {kind} - Caption: {caption}")
     await update.message.reply_text("❌ Извините, я пока не умею обрабатывать файлы, изображения или вложения.")
 
+async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("⚠️ Укажи запрос: /search <текст>")
+        return
+    
+    query = " ".join(context.args)
+    try:
+        results = google_search(query)
+        if not results:
+            await update.message.reply_text("Ничего не найдено.")
+            return
+        
+        reply_text = "\n\n".join(results)
+        await update.message.reply_text(reply_text)
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка поиска: {e}")
+
 async def debug_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         logging.info("RAW UPDATE: %s", update.to_dict())
@@ -277,6 +334,7 @@ def main():
     app.add_handler(CommandHandler("model", set_model))
     app.add_handler(CommandHandler("quota", quota))
     app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("search", search_cmd))
 
     # Сообщения
     #app.add_handler(MessageHandler(filters.ALL, debug_log), group=0)
