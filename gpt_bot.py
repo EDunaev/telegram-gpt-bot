@@ -102,65 +102,57 @@ def is_allowed(update: Update) -> bool:
     return False
 
 def should_web_search(user_input: str) -> bool:
-    """
-    Быстрый и дешёвый детектор намерения идти в веб:
-    1) Жёсткие триггеры по ключевым словам (надёжно, 0$)
-    2) (опц.) LLM-детектор — раскомментируй блок ниже
-    """
-    kw = [
-        "новост", "актуаль", "что произошло", "что сейчас",
-        "свеж", "google", "погугли", "поиск", "найди",
-        "сколько стоит", "цена", "курс", "сегодня", "сейчас",
-        "расписание", "когда выйдет", "релиз", "обновлен"
-    ]
-    low = user_input.lower()
-    if any(k in low for k in kw):
-        return True
-
+   
     # --- Опционально: уточняем у LLM (удорожает запрос) ---
-    # decision_prompt = (
-    #     "Определи, нужен ли интернет-поиск. Ответь ровно 'YES' или 'NO'.\n"
-    #     f"Запрос: {user_input}"
-    # )
-    # try:
-    #     decision = client.chat.completions.create(
-    #         model=current_model,
-    #         messages=[{"role": "user", "content": decision_prompt}],
-    #         max_tokens=3
-    #     ).choices[0].message.content.strip().upper()
-    #     return decision == "YES"
-    # except Exception:
-    #     return False
+    decision_prompt = (
+         "Определи, нужен ли интернет-поиск. Ответь ровно 'YES' или 'NO'.\n"
+         f"Запрос: {user_input}"
+    )
+    try:
+       decision = client.chat.completions.create(
+             model=current_model,
+             messages=[{"role": "user", "content": decision_prompt}],
+             max_tokens=3
+         ).choices[0].message.content.strip().upper()
+       return decision == "YES"
+    except Exception:
+         return False
 
     return False
 
-def google_search(query: str, num_results: int = 5) -> List[dict]:
-    """
-    Возвращает структурированный список: [{title, link, snippet}]
-    Требуются GOOGLE_CSE_API_KEY и GOOGLE_CSE_CX в .env
-    """
-    from dotenv import load_dotenv
-    load_dotenv()
-    api_key = os.getenv("GOOGLE_CSE_API_KEY")
-    cx = os.getenv("GOOGLE_CSE_CX")
-    if not api_key or not cx:
-        raise RuntimeError("Google CSE ключи не заданы (GOOGLE_CSE_API_KEY / GOOGLE_CSE_CX).")
+def google_search(query, num_results=5, date_restrict=None):
+    import requests
+    from urllib.parse import urlencode
 
-    url = "https://www.googleapis.com/customsearch/v1"
-    params = {"key": api_key, "cx": cx, "q": query, "num": num_results}
+    api_key = os.getenv("GOOGLE_API_KEY")
+    cse_id = os.getenv("GOOGLE_CSE_ID")
+    if not api_key or not cse_id:
+        raise RuntimeError("GOOGLE_API_KEY или GOOGLE_CSE_ID не заданы в .env")
 
-    r = requests.get(url, params=params, timeout=15)
-    r.raise_for_status()
-    data = r.json()
+    params = {
+        "q": query,
+        "key": api_key,
+        "cx": cse_id,
+        "num": num_results
+    }
 
-    items = []
-    for it in data.get("items", []):
-        items.append({
-            "title": it.get("title", "Без названия"),
-            "link": it.get("link", ""),
-            "snippet": it.get("snippet", "")
+    if date_restrict:
+        params["dateRestrict"] = date_restrict  # например, m6 — за последние 6 месяцев
+
+    url = f"https://www.googleapis.com/customsearch/v1?{urlencode(params)}"
+    resp = requests.get(url)
+    resp.raise_for_status()
+    data = resp.json()
+
+    results = []
+    for item in data.get("items", []):
+        results.append({
+            "title": item.get("title"),
+            "snippet": item.get("snippet"),
+            "link": item.get("link")
         })
-    return items
+
+    return results
 
 def summarize_search_results(user_query: str, results: list) -> str:
     """
@@ -333,6 +325,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             answer_text = resp.choices[0].message.content
 
+        logging.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
         # 4) Отправляем ответ
         await message.reply_text(answer_text)
 
@@ -390,6 +383,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             messages=messages,
         )
         answer_text = resp.choices[0].message.content
+
+        logging.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
 
         # 6. Отправляем ответ
         await update.message.reply_text(
