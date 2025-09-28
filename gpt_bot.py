@@ -2,7 +2,6 @@
 import os
 import tempfile
 import requests
-import logging
 import os
 import requests
 from dotenv import load_dotenv
@@ -22,6 +21,8 @@ from telegram.ext import CommandHandler
 from typing import List
 from urllib.parse import urlparse
 from datetime import datetime
+from logger import setup_logger
+
 
 # переменные инициализируются позже
 TELEGRAM_TOKEN = None
@@ -32,6 +33,7 @@ GOOGLE_CSE_CX = None
 client = None
 current_model = None
 user_histories = defaultdict(lambda: deque(maxlen=5))
+logger = setup_logger()
 
 _BAD_DOMAINS = {
      "support.google.com", "policies.google.com",
@@ -43,20 +45,6 @@ LIMITED_USERS = {111111111, 222222222, 333333333}
 CHAT_ID = -1001785925671
 BOT_USERNAME = "DunaevAssistentBot"
 chat_history = defaultdict(lambda: deque(maxlen=5))
-
-logging.basicConfig(
-    filename="bot.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-
-# 🔇 Отключаем лишние логи от сторонних библиотек
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("telegram.bot").setLevel(logging.INFO)
-logging.getLogger("telegram.ext._application").setLevel(logging.WARNING)
-logging.getLogger("telegram.ext._updater").setLevel(logging.WARNING)
-logging.getLogger("telegram.request").setLevel(logging.INFO)
 
 # --------------------
 # Helpers
@@ -93,7 +81,7 @@ def is_allowed(update: Update) -> bool:
     message = update.message
 
     text = message.text or message.caption or ""
-    logging.info(f"[{user_id}] - chat_id: {chat.id} - type: {chat.type} - Text: {text}")
+    logger.info(f"[{user_id}] - chat_id: {chat.id} - type: {chat.type} - Text: {text}")
  # Если пользователь — админ, всегда разрешаем
     if chat.type == "private" and user_id in ADMINS:
         return True
@@ -122,15 +110,15 @@ def should_web_search(user_input: str) -> bool:
              max_tokens=3
          ).choices[0].message.content.strip().upper()
        if (decision == "YES"):
-            logging.info("Запрос в интернете")
+            logger.info("Запрос в интернете")
             return True
        else:
-           logging.info("Запрос обработается не в интернете")
+           logger.info("Запрос обработается не в интернете")
            return False
     except Exception:
          return False
 
-import os, requests, logging
+import os, requests
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 
@@ -169,11 +157,11 @@ def _one_call(query: str, num: int, lr: str | None, date_restrict: str | None):
     try:
         r = requests.get(url, params=params, timeout=15)
         if r.status_code != 200:
-            logging.error("CSE HTTP %s: %s", r.status_code, r.text[:500])
+            logger.error("CSE HTTP %s: %s", r.status_code, r.text[:500])
             return []
         data = r.json()
     except Exception as e:
-        logging.exception("CSE request error: %s", e)
+        logger.exception("CSE request error: %s", e)
         return []
 
     items = []
@@ -186,7 +174,7 @@ def _one_call(query: str, num: int, lr: str | None, date_restrict: str | None):
             "link": link,
             "snippet": it.get("snippet", "")
         })
-    logging.info("CSE ok (lr=%s, date=%s): %d results", lr, date_restrict, len(items))
+    logger.info("CSE ok (lr=%s, date=%s): %d results", lr, date_restrict, len(items))
     return items
 
 def google_search(query: str, num_results: int = 8, date_restrict: str | None = "m6"):
@@ -233,11 +221,11 @@ def _one_call(query: str, num: int, lr: str | None, date_restrict: str | None):
     try:
         r = requests.get(url, params=params, timeout=15)
         if r.status_code != 200:
-            logging.error("CSE HTTP %s: %s", r.status_code, r.text[:500])
+            logger.error("CSE HTTP %s: %s", r.status_code, r.text[:500])
             return []
         data = r.json()
     except Exception as e:
-        logging.exception("CSE request error: %s", e)
+        logger.exception("CSE request error: %s", e)
         return []
 
     items = []
@@ -250,7 +238,7 @@ def _one_call(query: str, num: int, lr: str | None, date_restrict: str | None):
             "link": link,
             "snippet": it.get("snippet", "")
         })
-    logging.info("CSE ok (lr=%s, date=%s): %d results", lr, date_restrict, len(items))
+    logger.info("CSE ok (lr=%s, date=%s): %d results", lr, date_restrict, len(items))
     return items
 
 def summarize_search_results(user_query: str, results: list) -> str:
@@ -261,7 +249,7 @@ def summarize_search_results(user_query: str, results: list) -> str:
     if not results:
         return "Ничего не нашёл по запросу."
 
-    logging.info("CSE raw: %s", results)
+    logger.info("CSE raw: %s", results)
     blocks = []
     for i, it in enumerate(results, 1):
         blocks.append(f"{i}. {it['title']}\n{it['snippet']}\n{it['link']}")
@@ -394,7 +382,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_text = message.text or ""
     user_input = raw_text.replace(f"@{BOT_USERNAME}", "").strip()
 
-    logging.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
+    logger.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
 
     # База для сообщений в OpenAI
     messages = []
@@ -418,9 +406,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # 3) Умное решение: нужен ли веб‑поиск
         if should_web_search(user_input):
-            logging.info("Запрос в интернете")
+            logger.info("Запрос в интернете")
             raw_results = google_search(user_input, num_results=8, date_restrict="m6")
-            logging.info("CSE raw count: %d", len(raw_results))
+            logger.info("CSE raw count: %d", len(raw_results))
             answer_text = summarize_search_results(user_input, raw_results) if raw_results else "Ничего не нашёл по запросу."
         else:
             # обычный ответ GPT (без интернета)
@@ -430,7 +418,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             answer_text = resp.choices[0].message.content
 
-        logging.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
+        logger.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
         # 4) Отправляем ответ
         await message.reply_text(answer_text)
 
@@ -440,7 +428,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             history.append({"role": "assistant", "content": answer_text})
 
     except Exception as e:
-        logging.exception("handle_text error")
+        logger.exception("handle_text error")
         await message.reply_text(f"❌ Ошибка: {format_exc(e)}")
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -451,7 +439,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user_id = user.id
 
-    logging.info(f"[{user.id}] @{user.username or 'no_username'} - VOICE: получено голосовое сообщение")
+    logger.info(f"[{user.id}] @{user.username or 'no_username'} - VOICE: получено голосовое сообщение")
     try:
         # 1. Скачиваем голосовое
         voice_file = await update.message.voice.get_file()
@@ -471,7 +459,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         text = transcript.text.strip()
-        logging.info(f"{user} - VOICE TEXT: {text}")
+        logger.info(f"{user} - VOICE TEXT: {text}")
 
         # 4. Формируем сообщения для GPT
         messages = []
@@ -489,7 +477,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         answer_text = resp.choices[0].message.content
 
-        logging.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
+        logger.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
 
         # 6. Отправляем ответ
         await update.message.reply_text(
@@ -501,7 +489,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             history.append({"role": "assistant", "content": answer_text})
 
     except Exception as e:
-        logging.error(f"{user} - VOICE ERROR: {str(e)}")
+        logger.error(f"{user} - VOICE ERROR: {str(e)}")
         await update.message.reply_text(f"❌ Ошибка при обработке голосового: {format_exc(e)}")
 
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -511,7 +499,7 @@ async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE)
     kind = type(update.message.effective_attachment)
     caption = update.message.caption or "(без подписи)"
 
-    logging.info(f"[{user.id}] @{user.username or 'no_username'} - UNSUPPORTED: {kind} - Caption: {caption}")
+    logger.info(f"[{user.id}] @{user.username or 'no_username'} - UNSUPPORTED: {kind} - Caption: {caption}")
     await update.message.reply_text("❌ Извините, я пока не умею обрабатывать файлы, изображения или вложения.")
 
 async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -533,9 +521,9 @@ async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def debug_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        logging.info("RAW UPDATE: %s", update.to_dict())
+        logger.info("RAW UPDATE: %s", update.to_dict())
     except Exception as e:
-        logging.exception("Failed to log raw update: %s", e)
+        logger.exception("Failed to log raw update: %s", e)
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -543,7 +531,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_histories.pop(user_id, None)
         await update.message.reply_text("🧹 Контекст очищен.")
 async def error_handler(update, context):
-    logging.exception("Unhandled error: %s", context.error)
+    logger.exception("Unhandled error: %s", context.error)
 
 # --------------------
 # Main
@@ -568,10 +556,10 @@ def main():
 
     app.add_error_handler(error_handler)
 
-    logging.info(f"GPT-бот запущен! Текущая модель: {current_model}")
+    logger.info(f"GPT-бот запущен! Текущая модель: {current_model}")
     app.run_polling()
     me = app.bot.get_me()
-    logging.info("Bot username:", me.username)
+    logger.info("Bot username:", me.username)
 
 if __name__ == "__main__":
     main()
