@@ -9,7 +9,7 @@ from handlers import (
     handle_text, handle_voice, handle_unsupported, search_cmd,
     error_handler
 )
-import logging_conf  # чтобы настроить логирование
+import logger  # чтобы настроить логирование
 
 def main():
     init_env()
