@@ -116,6 +116,7 @@ def should_web_search(user_input: str) -> bool:
            logger.info("Запрос обработается не в интернете")
            return False
     except Exception:
+         logger.error("Ошибка определения Запроса")
          return False
 
 import os, requests
