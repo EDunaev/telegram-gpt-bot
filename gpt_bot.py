@@ -118,7 +118,7 @@ def should_web_search(user_input: str) -> bool:
     except Exception:
          return False
 
-import os, requests, logger
+import os, requests
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 
