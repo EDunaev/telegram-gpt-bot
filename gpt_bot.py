@@ -61,6 +61,7 @@ def init_env():
     DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo") 
     GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY")
     GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX")
+    DECISION_MODEL = os.getenv("DECISION_MODEL", "gpt-4o-mini") 
 
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
         raise RuntimeError("TELEGRAM_TOKEN или OPENAI_API_KEY не заданы в .env")
@@ -97,27 +98,19 @@ def is_allowed(update: Update) -> bool:
     return False
 
 def should_web_search(user_input: str) -> bool:
-   
-    # --- Опционально: уточняем у LLM (удорожает запрос) ---
-    decision_prompt = (
-         "Определи, нужен ли интернет-поиск. Ответь ровно 'YES' или 'NO'.\n"
-         f"Запрос: {user_input}"
-    )
-    try:
-       decision = client.chat.completions.create(
-             model=current_model,
-             messages=[{"role": "user", "content": decision_prompt}],
-             max_tokens=10
-         ).choices[0].message.content.strip().upper()
-       if (decision == "YES"):
-            logger.info("Запрос в интернете")
-            return True
-       else:
-           logger.info("Запрос обработается не в интернете")
-           return False
-    except Exception:
-         logger.error("Ошибка определения Запроса")
-         return False
+    """
+    Определяет, нужен ли интернет-поиск.
+    Логика: если в запросе встречается ключевая фраза 'найди в интернете',
+    то возвращает True, иначе False.
+    """
+    q = (user_input or "").lower().strip()
+    if "найди в интернете" in q:
+        logger.info("should_web_search: ключевая фраза найдена → интернет-поиск (YES)")
+        return True
+    else:
+        logger.info("should_web_search: ключевая фраза отсутствует → без интернета (NO)")
+        return False
+
 
 import os, requests
 from urllib.parse import urlparse
