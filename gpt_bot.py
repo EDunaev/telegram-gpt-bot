@@ -275,8 +275,11 @@ def summarize_search_results(user_query: str, results: list) -> str:
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_prompt}
         ],
-        temperature=0.2
     )
+    if not current_model.startswith("gpt-5-nano"):
+        resp["temperature"] = 0.2
+
+    resp = client.chat.completions.create(**resp)
     return resp.choices[0].message.content
 
 def _is_bad_domain(url: str) -> bool:
