@@ -107,7 +107,7 @@ def should_web_search(user_input: str) -> bool:
        decision = client.chat.completions.create(
              model=current_model,
              messages=[{"role": "user", "content": decision_prompt}],
-             max_tokens=3
+             max_tokens=10
          ).choices[0].message.content.strip().upper()
        if (decision == "YES"):
             logger.info("Запрос в интернете")
