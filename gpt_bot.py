@@ -236,10 +236,6 @@ def _one_call(query: str, num: int, lr: str | None, date_restrict: str | None):
     return items
 
 def summarize_search_results(user_query: str, results: list) -> str:
-    """
-    Отдаём GPT сырые результаты, просим САМОСТОЯТЕЛЬНО выбрать формат,
-    но жёстко требуем ориентироваться на свежесть и надёжность.
-    """
     if not results:
         return "Ничего не нашёл по запросу."
 
@@ -252,7 +248,7 @@ def summarize_search_results(user_query: str, results: list) -> str:
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
     system_prompt = (
-        "Ты ассистент‑аналитик результатов веб‑поиска. У тебя НЕТ прямого доступа в интернет; "
+        "Ты ассистент-аналитик результатов веб-поиска. У тебя НЕТ прямого доступа в интернет; "
         "используй ТОЛЬКО предоставленные сниппеты и ссылки. "
         f"Текущая дата: {today}. "
         "Всегда предпочитай более свежую информацию и официальные/авторитетные источники "
@@ -269,18 +265,24 @@ def summarize_search_results(user_query: str, results: list) -> str:
         f"{corpus}"
     )
 
-    resp = client.chat.completions.create(
-        model=current_model,
-        messages=[
+    # Формируем аргументы для API
+    kwargs = {
+        "model": current_model,
+        "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt}
-        ],
-    )
-    if not current_model.startswith("gpt-5-nano"):
-        resp["temperature"] = 0.2
+            {"role": "user", "content": user_prompt},
+        ]
+    }
 
-    resp = client.chat.completions.create(**resp)
+    # 🔧 убираем temperature для gpt-5-nano
+    if not current_model.startswith("gpt-5-nano"):
+        kwargs["temperature"] = 0.2
+
+    # правильный вызов
+    resp = client.chat.completions.create(**kwargs)
+
     return resp.choices[0].message.content
+
 
 def _is_bad_domain(url: str) -> bool:
     try:
