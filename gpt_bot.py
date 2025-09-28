@@ -21,7 +21,7 @@ from telegram.ext import CommandHandler
 from typing import List
 from urllib.parse import urlparse
 from datetime import datetime
-from logger import logger
+from logger import setup_logger
 
 
 # переменные инициализируются позже
@@ -33,6 +33,7 @@ GOOGLE_CSE_CX = None
 client = None
 current_model = None
 user_histories = defaultdict(lambda: deque(maxlen=5))
+logger = setup_logger()
 
 _BAD_DOMAINS = {
      "support.google.com", "policies.google.com",
