@@ -182,9 +182,9 @@ def google_search(query: str, num_results: int = 8, date_restrict: str | None = 
         raise RuntimeError("Google CSE ключи не заданы (GOOGLE_CSE_API_KEY / GOOGLE_CSE_CX).")
 
     # 1) узко: RU + свежесть
-    res = _one_call(query, num_results, lr="lang_ru", date_restrict=date_restrict)
-    if res:
-        return res
+    # res = _one_call(query, num_results, lr="lang_ru", date_restrict=date_restrict)
+    # if res:
+    #     return res
 
     # 2) шире: любой язык + свежесть
     res = _one_call(query, num_results, lr=None, date_restrict=date_restrict)
