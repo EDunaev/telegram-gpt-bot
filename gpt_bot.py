@@ -401,7 +401,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 2) ПРИВАТНЫЕ ЧАТЫ: индивидуальный контекст ТОЛЬКО для админов
     if chat.type == "private" and user_id in ADMINS:
         history = user_histories[user_id]   
-        logger.log(list(history))       # defaultdict — KeyError не будет
+        logger.log(history)       # defaultdict — KeyError не будет
         messages.extend(list(history))             # отдаём историю в GPT
         messages.append({"role": "user", "content": user_input})
     else:
