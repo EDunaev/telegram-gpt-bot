@@ -267,9 +267,10 @@ def summarize_search_results(user_query: str, results: list) -> str:
         f"{corpus}"
     )
 
+    SUMMARY_MODEL = "gpt-4o-mini"
     # Формируем аргументы для API
     kwargs = {
-        "model": current_model,
+        "model": SUMMARY_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -277,8 +278,8 @@ def summarize_search_results(user_query: str, results: list) -> str:
     }
 
     # 🔧 убираем temperature для gpt-5-nano
-    if not current_model.startswith("gpt-5-nano"):
-        kwargs["temperature"] = 0.2
+    # if not current_model.startswith("gpt-5-nano"):
+    #     kwargs["temperature"] = 0.2
 
     # правильный вызов
     logger.info("Старт запроса")
