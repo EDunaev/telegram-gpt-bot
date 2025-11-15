@@ -247,6 +247,8 @@ def summarize_search_results(user_query: str, results: list) -> str:
 
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
+    logger.info("Дата поиска %s", today)
+
     system_prompt = (
         "Ты ассистент-аналитик результатов веб-поиска. У тебя НЕТ прямого доступа в интернет; "
         "используй ТОЛЬКО предоставленные сниппеты и ссылки. "
@@ -279,7 +281,9 @@ def summarize_search_results(user_query: str, results: list) -> str:
         kwargs["temperature"] = 0.2
 
     # правильный вызов
+    logger.info("Старт запроса")
     resp = client.chat.completions.create(**kwargs)
+    logger.info("Конец запроса")
 
     return resp.choices[0].message.content
 
