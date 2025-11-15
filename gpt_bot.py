@@ -401,7 +401,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 2) ПРИВАТНЫЕ ЧАТЫ: индивидуальный контекст ТОЛЬКО для админов
     if chat.type == "private" and user_id in ADMINS:
         history = user_histories[user_id]        # defaultdict — KeyError не будет
-        logger.info(user_histories)
         messages.extend(list(history))             # отдаём историю в GPT
         messages.append({"role": "user", "content": user_input})
     else:
@@ -412,7 +411,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if should_web_search(user_input):
             logger.info("Запрос в интернете")
             raw_results = google_search(user_input, num_results=8, date_restrict="m6")
-            logger.info("CSE raw count: %d", len(raw_results))
             answer_text = summarize_search_results(user_input, raw_results) if raw_results else "Ничего не нашёл по запросу."
         else:
             # обычный ответ GPT (без интернета)
