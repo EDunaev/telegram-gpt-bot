@@ -4,7 +4,8 @@ import tempfile
 import requests
 import os
 import requests
-from dotenv import load_dotenv
+import os, requests
+from urllib.parse import urlparse
 from pydub import AudioSegment
 from dotenv import load_dotenv
 from telegram import Update
@@ -59,9 +60,9 @@ def init_env():
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo") 
-    GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY")
-    GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX")
     DECISION_MODEL = os.getenv("DECISION_MODEL", "gpt-4o-mini") 
+    GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    GOOGLE_CSE_CX  = os.getenv("GOOGLE_CSE_CX") or os.getenv("GOOGLE_CSE_ID")
 
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
         raise RuntimeError("TELEGRAM_TOKEN или OPENAI_API_KEY не заданы в .env")
@@ -112,18 +113,6 @@ def should_web_search(user_input: str) -> bool:
         return False
 
 
-import os, requests
-from urllib.parse import urlparse
-from dotenv import load_dotenv
-
-load_dotenv()
-GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY") or os.getenv("GOOGLE_API_KEY")
-GOOGLE_CSE_CX  = os.getenv("GOOGLE_CSE_CX") or os.getenv("GOOGLE_CSE_ID")
-
-_BAD_DOMAINS = {
-    "google.com", "support.google.com", "policies.google.com",
-    "accounts.google.com", "blog.google", "chrome.google.com"
-}
 
 def _is_bad_domain(url: str) -> bool:
     try:
