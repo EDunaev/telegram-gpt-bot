@@ -195,46 +195,6 @@ def google_search(query: str, num_results: int = 8, date_restrict: str | None = 
     res = _one_call(query, num_results, lr=None, date_restrict=None)
     return res
 
-
-def _one_call(query: str, num: int, lr: str | None, date_restrict: str | None):
-    """Один вызов CSE + аккуратные логи."""
-    url = "https://www.googleapis.com/customsearch/v1"
-    params = {
-        "key": GOOGLE_CSE_API_KEY,
-        "cx": GOOGLE_CSE_CX,
-        "q": query,
-        "num": max(1, min(num, 10)),
-        "safe": "active",
-        "hl": "ru",
-    }
-    if lr:
-        params["lr"] = lr        # например, lang_ru
-    if date_restrict:
-        params["dateRestrict"] = date_restrict  # m6 / y1 / w4 / d7
-
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        if r.status_code != 200:
-            logger.error("CSE HTTP %s: %s", r.status_code, r.text[:500])
-            return []
-        data = r.json()
-    except Exception as e:
-        logger.exception("CSE request error: %s", e)
-        return []
-
-    items = []
-    for it in data.get("items", []) or []:
-        link = it.get("link", "")
-        if not link or _is_bad_domain(link):
-            continue
-        items.append({
-            "title": it.get("title", "Без названия"),
-            "link": link,
-            "snippet": it.get("snippet", "")
-        })
-    logger.info("CSE ok (lr=%s, date=%s): %d results", lr, date_restrict, len(items))
-    return items
-
 def summarize_search_results(user_query: str, results: list) -> str:
     if not results:
         return "Ничего не нашёл по запросу."
