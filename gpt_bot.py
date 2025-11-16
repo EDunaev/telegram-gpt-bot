@@ -8,7 +8,7 @@ import os, requests
 from urllib.parse import urlparse
 from pydub import AudioSegment
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -34,7 +34,10 @@ GOOGLE_CSE_CX = None
 client = None
 current_model = None
 user_histories = defaultdict(lambda: deque(maxlen=5))
+user_modes = defaultdict(lambda: "chat") 
 logger = setup_logger()
+WEB_BUTTON = "🌐 Веб-поиск"
+CHAT_BUTTON = "💬 Обычный чат"
 
 _BAD_DOMAINS = {
      "support.google.com", "policies.google.com",
@@ -45,7 +48,11 @@ ADMINS = {1091992386, 1687504544}
 LIMITED_USERS = {111111111, 222222222, 333333333} 
 CHAT_ID = -1001785925671
 BOT_USERNAME = "DunaevAssistentBot"
-chat_history = defaultdict(lambda: deque(maxlen=5))
+chat_history = defaultdict(lambda: deque(maxlen=3))
+main_keyboard = ReplyKeyboardMarkup(
+    [[KeyboardButton(WEB_BUTTON), KeyboardButton(CHAT_BUTTON)]],
+    resize_keyboard=True
+)
 
 # --------------------
 # Helpers
@@ -236,14 +243,6 @@ def summarize_search_results(user_query: str, results: list) -> str:
 
     return resp.choices[0].message.content
 
-
-def _is_bad_domain(url: str) -> bool:
-    try:
-        host = urlparse(url).netloc.lower()
-        return any(host.endswith(d) for d in _BAD_DOMAINS)
-    except Exception:
-        return False
-
 # --------------------
 # Handlers
 # --------------------
@@ -255,9 +254,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     common_cmds = "Команды:\n/start — приветствие\n/help — помощь"
     if is_admin(user_id):
         extra = "\n/model <name> — сменить модель\n/quota — показать остаток бюджета OpenAI API"
-        await update.message.reply_text(base + common_cmds + extra)
+        text = base + common_cmds + extra
     else:
-        await update.message.reply_text(base + common_cmds)
+        text = base + common_cmds
+
+    await update.message.reply_text(text, reply_markup=main_keyboard)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
@@ -336,7 +337,30 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
 
-    # База для сообщений в OpenAI
+    # --- Переключение режима через кнопки (только в приватке) ---
+    if chat.type == "private":
+        if user_input == WEB_BUTTON:
+            user_modes[user_id] = "web"
+            await message.reply_text(
+                "✅ Режим: 🌐 веб-поиск.\nПросто напиши запрос, я сначала схожу в интернет.",
+                reply_markup=main_keyboard,
+            )
+            return
+
+        if user_input == CHAT_BUTTON:
+            user_modes[user_id] = "chat"
+            await message.reply_text(
+                "✅ Режим: 💬 обычный чат.\nОтветы только от модели без интернета.",
+                reply_markup=main_keyboard,
+            )
+            return
+
+    # --- Если включён веб-режим → сразу идём в интернет ---
+    if chat.type == "private" and user_modes[user_id] == "web":
+        await do_web_search(user_input, update)
+        return
+
+    # --- Обычный GPT-ответ ---
     messages = []
 
     # 1) ГРУППЫ: если это reply на сообщение бота — добавим предыдущий ответ как контекст
@@ -345,63 +369,57 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if reply_msg.from_user and reply_msg.from_user.username == BOT_USERNAME:
             prev_text = reply_msg.text or ""
             if prev_text:
-                messages.append({"role": "user", "content": prev_text})
+                # это сообщение бота → роль assistant
+                messages.append({"role": "assistant", "content": prev_text})
 
     # 2) ПРИВАТНЫЕ ЧАТЫ: индивидуальный контекст ТОЛЬКО для админов
     if chat.type == "private" and user_id in ADMINS:
-        history = user_histories[user_id]        # defaultdict — KeyError не будет
-        messages.extend(list(history))             # отдаём историю в GPT
+        history = user_histories[user_id]
+        messages.extend(list(history))
         messages.append({"role": "user", "content": user_input})
     else:
         messages.append({"role": "user", "content": user_input})
 
     try:
-        # обычный ответ GPT (без интернета)
-        resp = client.chat.completions.create(   # <-- исправленный вызов
+        resp = client.chat.completions.create(
             model=current_model,
             messages=messages
         )
         answer_text = resp.choices[0].message.content
         logger.info("LOG Choices %s", resp.choices)
 
-
         logger.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
-        # 4) Отправляем ответ
         await message.reply_text(answer_text)
 
-        # 5) Если приватка с админом — сохраним и ответ ассистента
         if chat.type == "private" and user_id in ADMINS:
             history = user_histories[user_id]
+            # лучше сохранять и пользователя, и ассистента
+            history.append({"role": "user", "content": user_input})
             history.append({"role": "assistant", "content": answer_text})
 
     except Exception as e:
         logger.exception("handle_text error")
         await message.reply_text(f"❌ Ошибка: {format_exc(e)}")
 
-async def search_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update):
-        return
 
+async def do_web_search(user_input: str, update: Update):
     message = update.message
     chat = update.effective_chat
     user = update.effective_user
     user_id = user.id
 
-    raw_text = message.text or ""
-    user_input = raw_text.replace(f"@{BOT_USERNAME}", "").strip()
-
-    logger.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
-
-    # База для сообщений в OpenAI
-    messages = []
+    logger.info(f"[{user.id}] @{user.username or 'no_username'} - WEB TEXT: {user_input}")
 
     try:
         logger.info("Запрос в интернете")
         raw_results = google_search(user_input, num_results=8, date_restrict="m6")
-        answer_text = summarize_search_results(user_input, raw_results) if raw_results else "Ничего не нашёл по запросу."
+        answer_text = (
+            summarize_search_results(user_input, raw_results)
+            if raw_results else
+            "Ничего не нашёл по запросу."
+        )
 
-        logger.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
-
+        logger.info(f"[BOT -> {user.id}] Ответ (WEB): {answer_text}")
         await message.reply_text(answer_text)
 
         if chat.type == "private" and user_id in ADMINS:
@@ -409,8 +427,25 @@ async def search_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
             history.append({"role": "assistant", "content": answer_text})
 
     except Exception as e:
-        logger.exception("search_web error")
-        await message.reply_text(f"❌ Ошибка: {format_exc(e)}")
+        logger.exception("do_web_search error")
+        await message.reply_text(f"❌ Ошибка веб-поиска: {format_exc(e)}")
+
+async def search_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+
+    message = update.message
+    raw_text = message.text or ""
+
+    # "/web запрос..." → убираем саму команду
+    query = raw_text.split(" ", 1)
+    if len(query) < 2 or not query[1].strip():
+        await message.reply_text("⚠️ Укажи запрос после команды: /web <текст>")
+        return
+
+    user_input = query[1].strip()
+    await do_web_search(user_input, update)
+
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
@@ -501,10 +536,15 @@ async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Ничего не найдено.")
             return
         
-        reply_text = "\n\n".join(results)
+        blocks = []
+        for i, it in enumerate(results, 1):
+            blocks.append(f"{i}. {it['title']}\n{it['snippet']}\n{it['link']}")
+        reply_text = "\n\n".join(blocks)
+
         await update.message.reply_text(reply_text)
     except Exception as e:
         await update.message.reply_text(f"Ошибка поиска: {e}")
+
 
 async def debug_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
