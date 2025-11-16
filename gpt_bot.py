@@ -356,19 +356,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         messages.append({"role": "user", "content": user_input})
 
     try:
-        # 3) Умное решение: нужен ли веб‑поиск
-        if should_web_search(user_input):
-            logger.info("Запрос в интернете")
-            raw_results = google_search(user_input, num_results=8, date_restrict="m6")
-            answer_text = summarize_search_results(user_input, raw_results) if raw_results else "Ничего не нашёл по запросу."
-        else:
-            # обычный ответ GPT (без интернета)
-            resp = client.chat.completions.create(   # <-- исправленный вызов
-                model=current_model,
-                messages=messages
-            )
-            answer_text = resp.choices[0].message.content
-            logger.info("LOG Choices %s", resp.choices)
+        # обычный ответ GPT (без интернета)
+        resp = client.chat.completions.create(   # <-- исправленный вызов
+            model=current_model,
+            messages=messages
+        )
+        answer_text = resp.choices[0].message.content
+        logger.info("LOG Choices %s", resp.choices)
 
 
         logger.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
@@ -382,6 +376,40 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.exception("handle_text error")
+        await message.reply_text(f"❌ Ошибка: {format_exc(e)}")
+
+async def search_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+
+    message = update.message
+    chat = update.effective_chat
+    user = update.effective_user
+    user_id = user.id
+
+    raw_text = message.text or ""
+    user_input = raw_text.replace(f"@{BOT_USERNAME}", "").strip()
+
+    logger.info(f"[{user.id}] @{user.username or 'no_username'} - TEXT: {user_input}")
+
+    # База для сообщений в OpenAI
+    messages = []
+
+    try:
+        logger.info("Запрос в интернете")
+        raw_results = google_search(user_input, num_results=8, date_restrict="m6")
+        answer_text = summarize_search_results(user_input, raw_results) if raw_results else "Ничего не нашёл по запросу."
+
+        logger.info(f"[BOT -> {user.id}] Ответ: {answer_text}")
+
+        await message.reply_text(answer_text)
+
+        if chat.type == "private" and user_id in ADMINS:
+            history = user_histories[user_id]
+            history.append({"role": "assistant", "content": answer_text})
+
+    except Exception as e:
+        logger.exception("search_web error")
         await message.reply_text(f"❌ Ошибка: {format_exc(e)}")
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -506,6 +534,7 @@ def main():
     app.add_handler(CommandHandler("quota", quota))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("search", search_cmd))
+    app.add_handler(CommandHandler("web"), search_web)
 
     # Сообщения
     #app.add_handler(MessageHandler(filters.ALL, debug_log), group=0)
