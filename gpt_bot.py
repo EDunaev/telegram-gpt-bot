@@ -534,7 +534,7 @@ def main():
     app.add_handler(CommandHandler("quota", quota))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("search", search_cmd))
-    app.add_handler(CommandHandler("web"), search_web)
+    app.add_handler(CommandHandler("web", search_web))
 
     # Сообщения
     #app.add_handler(MessageHandler(filters.ALL, debug_log), group=0)
