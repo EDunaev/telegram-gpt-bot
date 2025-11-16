@@ -444,6 +444,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"{user} - VOICE ERROR: {str(e)}")
         await update.message.reply_text(f"❌ Ошибка при обработке голосового: {format_exc(e)}")
+    finally:
+        try:
+            os.remove(ogg_path)
+            os.remove(wav_path)
+        except OSError:
+            pass
 
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
