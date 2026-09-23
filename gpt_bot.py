@@ -359,6 +359,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await do_web_search(user_input, update)
         return
 
+    # --- Reply на сообщение с картинкой (от бота или от любого пользователя) → vision, а не обычный чат ---
+    replied = message.reply_to_message
+    replied_image = _extract_image_source(replied) if replied else None
+    if replied_image is not None:
+        prompt_text = user_input or "Что на этой картинке?"
+        logger.info(f"[{user.id}] @{user.username or 'no_username'} - REPLY TO PHOTO: {prompt_text!r}")
+        try:
+            image_b64 = await _download_image_b64(replied_image)
+            answer_text = await _ask_vision(prompt_text, image_b64)
+
+            logger.info(f"[BOT -> {user.id}] Ответ (REPLY PHOTO): {answer_text}")
+            await message.reply_text(answer_text)
+
+            if chat.type == "private" and user_id in ADMINS:
+                history = user_histories[user_id]
+                history.append({"role": "user", "content": prompt_text})
+                history.append({"role": "assistant", "content": answer_text})
+
+        except Exception as e:
+            logger.exception("handle_text reply-to-photo error")
+            await message.reply_text(f"❌ Ошибка при обработке изображения: {format_exc(e)}")
+        return
+
     # --- Обычный GPT-ответ ---
     messages = []
 
@@ -520,6 +543,32 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except OSError:
                     pass
 
+def _extract_image_source(msg):
+    """Фото или картинка-документ у сообщения msg, с которых можно вызвать get_file(). Иначе None."""
+    if msg is None:
+        return None
+    if msg.photo:
+        return msg.photo[-1]
+    if msg.document and (msg.document.mime_type or "").startswith("image/"):
+        return msg.document
+    return None
+
+async def _download_image_b64(image_source) -> str:
+    tg_file = await image_source.get_file()
+    file_bytes = await tg_file.download_as_bytearray()
+    return base64.b64encode(bytes(file_bytes)).decode("utf-8")
+
+async def _ask_vision(prompt_text: str, image_b64: str) -> str:
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt_text},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+        ],
+    }]
+    resp = client.chat.completions.create(model=VISION_MODEL, messages=messages)
+    return resp.choices[0].message.content
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
@@ -535,23 +584,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"[{user.id}] @{user.username or 'no_username'} - PHOTO: caption={caption!r}")
 
     try:
-        tg_file = await (message.photo[-1].get_file() if message.photo else message.document.get_file())
-        file_bytes = await tg_file.download_as_bytearray()
-        b64 = base64.b64encode(bytes(file_bytes)).decode("utf-8")
-
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt_text},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            ],
-        }]
-
-        resp = client.chat.completions.create(
-            model=VISION_MODEL,
-            messages=messages,
-        )
-        answer_text = resp.choices[0].message.content
+        image_b64 = await _download_image_b64(_extract_image_source(message))
+        answer_text = await _ask_vision(prompt_text, image_b64)
 
         logger.info(f"[BOT -> {user.id}] Ответ (PHOTO): {answer_text}")
         await message.reply_text(answer_text)

@@ -102,3 +102,33 @@ async def test_reset_ignores_unauthorized_user():
     assert update.message.replies == []
 
 
+@pytest.mark.asyncio
+async def test_handle_text_reply_to_photo_uses_vision(monkeypatch):
+    """Reply текстом на сообщение с фото (своё или чужое) должен уйти в vision, а не в обычный чат."""
+    from types import SimpleNamespace
+    from gpt_bot import handle_text
+
+    update = DummyUpdate(user_id=list(ADMINS)[0], chat_id=CHAT_ID, text="что за шутка?")
+    update.message.reply_to_message = SimpleNamespace(
+        photo=[SimpleNamespace()],
+        document=None,
+        from_user=SimpleNamespace(username="someoneelse"),
+    )
+    context = MagicMock()
+
+    async def fake_download(image_source):
+        return "b64data"
+
+    async def fake_ask_vision(prompt_text, image_b64):
+        assert prompt_text == "что за шутка?"
+        assert image_b64 == "b64data"
+        return "Это смешно потому что..."
+
+    monkeypatch.setattr("gpt_bot._download_image_b64", fake_download)
+    monkeypatch.setattr("gpt_bot._ask_vision", fake_ask_vision)
+
+    await handle_text(update, context)
+
+    assert update.message.replies == ["Это смешно потому что..."]
+
+
