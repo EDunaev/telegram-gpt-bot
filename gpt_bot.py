@@ -95,17 +95,13 @@ def is_allowed(update: Update) -> bool:
         # 1. Упоминание
         if BOT_USERNAME.lower() in text.lower():
             return True
-        replied = message.reply_to_message
         # 2. Ответ на сообщение бота
+        replied = message.reply_to_message
         if replied and replied.from_user:
             username = replied.from_user.username or ""
             if username.lower() == BOT_USERNAME.lower():
                 return True
-        # 3. Ответ на сообщение с картинкой (от кого угодно) — бот не хранит историю
-        # в группах, и reply на фото — единственный способ дать ему контекст
-        if replied and _extract_image_source(replied) is not None:
-            return True
-
+    
     return False
 
 def should_web_search(user_input: str) -> bool:
@@ -551,12 +547,10 @@ def _extract_image_source(msg):
     """Фото или картинка-документ у сообщения msg, с которых можно вызвать get_file(). Иначе None."""
     if msg is None:
         return None
-    photo = getattr(msg, "photo", None)
-    if photo:
-        return photo[-1]
-    document = getattr(msg, "document", None)
-    if document and (getattr(document, "mime_type", None) or "").startswith("image/"):
-        return document
+    if msg.photo:
+        return msg.photo[-1]
+    if msg.document and (msg.document.mime_type or "").startswith("image/"):
+        return msg.document
     return None
 
 async def _download_image_b64(image_source) -> str:
