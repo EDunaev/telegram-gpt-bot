@@ -36,3 +36,21 @@ def test_group_reply_to_bot_allowed():
         from_user=SimpleNamespace(username="DunaevAssistentBot")
     )
     assert is_allowed(update)
+
+def test_group_reply_to_photo_from_other_user_allowed():
+    update = make_fake_update(user_id=999999, chat_type="supergroup", chat_id=CHAT_ID, text="объясни шутку")
+    update.message.reply_to_message = SimpleNamespace(
+        from_user=SimpleNamespace(username="someoneelse"),
+        photo=[SimpleNamespace()],
+        document=None,
+    )
+    assert is_allowed(update)
+
+def test_group_reply_to_plain_text_from_other_user_denied():
+    update = make_fake_update(user_id=999999, chat_type="supergroup", chat_id=CHAT_ID, text="объясни шутку")
+    update.message.reply_to_message = SimpleNamespace(
+        from_user=SimpleNamespace(username="someoneelse"),
+        photo=[],
+        document=None,
+    )
+    assert not is_allowed(update)
