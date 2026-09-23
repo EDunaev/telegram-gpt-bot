@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import base64
 import tempfile
 import requests
 from urllib.parse import urlparse
@@ -22,6 +23,7 @@ from logger import setup_logger
 TELEGRAM_TOKEN = None
 OPENAI_API_KEY = None
 DEFAULT_MODEL = None
+VISION_MODEL = None
 GOOGLE_CSE_API_KEY = None
 GOOGLE_CSE_CX = None
 client = None
@@ -51,16 +53,17 @@ main_keyboard = ReplyKeyboardMarkup(
 # Helpers
 # --------------------
 def init_env():
-    global TELEGRAM_TOKEN, OPENAI_API_KEY, DEFAULT_MODEL, GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX, client, current_model
-    
+    global TELEGRAM_TOKEN, OPENAI_API_KEY, DEFAULT_MODEL, VISION_MODEL, GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX, client, current_model
+
     # --------------------
     # Env & clients
     # --------------------
     load_dotenv()
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo") 
-    DECISION_MODEL = os.getenv("DECISION_MODEL", "gpt-4o-mini") 
+    DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    DECISION_MODEL = os.getenv("DECISION_MODEL", "gpt-4o-mini")
+    VISION_MODEL = os.getenv("VISION_MODEL", "gpt-4o-mini")
     GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY") or os.getenv("GOOGLE_API_KEY")
     GOOGLE_CSE_CX  = os.getenv("GOOGLE_CSE_CX") or os.getenv("GOOGLE_CSE_ID")
 
@@ -517,6 +520,51 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except OSError:
                     pass
 
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+
+    message = update.message
+    chat = update.effective_chat
+    user = update.effective_user
+    user_id = user.id
+
+    caption = (message.caption or "").strip()
+    prompt_text = caption or "Что на этой картинке?"
+
+    logger.info(f"[{user.id}] @{user.username or 'no_username'} - PHOTO: caption={caption!r}")
+
+    try:
+        tg_file = await (message.photo[-1].get_file() if message.photo else message.document.get_file())
+        file_bytes = await tg_file.download_as_bytearray()
+        b64 = base64.b64encode(bytes(file_bytes)).decode("utf-8")
+
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt_text},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ],
+        }]
+
+        resp = client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=messages,
+        )
+        answer_text = resp.choices[0].message.content
+
+        logger.info(f"[BOT -> {user.id}] Ответ (PHOTO): {answer_text}")
+        await message.reply_text(answer_text)
+
+        if chat.type == "private" and user_id in ADMINS:
+            history = user_histories[user_id]
+            history.append({"role": "user", "content": prompt_text})
+            history.append({"role": "assistant", "content": answer_text})
+
+    except Exception as e:
+        logger.exception("handle_photo error")
+        await message.reply_text(f"❌ Ошибка при обработке изображения: {format_exc(e)}")
+
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
@@ -587,7 +635,8 @@ def main():
     #app.add_handler(MessageHandler(filters.ALL, debug_log), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-    app.add_handler(MessageHandler(filters.PHOTO | Document.ALL | filters.VIDEO, handle_unsupported))
+    app.add_handler(MessageHandler(filters.PHOTO | Document.IMAGE, handle_photo))
+    app.add_handler(MessageHandler((Document.ALL & ~Document.IMAGE) | filters.VIDEO, handle_unsupported))
 
     app.add_error_handler(error_handler)
 

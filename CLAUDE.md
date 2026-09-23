@@ -28,7 +28,8 @@ python gpt_bot.py
 
 Нет `requirements.txt` — зависимости ставятся вручную. Нужен `.env` в корне с минимум:
 `TELEGRAM_TOKEN`, `OPENAI_API_KEY`. Опционально: `OPENAI_MODEL` (default `gpt-3.5-turbo`),
-`DECISION_MODEL`, `GOOGLE_CSE_API_KEY`/`GOOGLE_API_KEY`, `GOOGLE_CSE_CX`/`GOOGLE_CSE_ID`.
+`DECISION_MODEL`, `VISION_MODEL` (default `gpt-4o-mini`), `GOOGLE_CSE_API_KEY`/`GOOGLE_API_KEY`,
+`GOOGLE_CSE_CX`/`GOOGLE_CSE_ID`.
 
 ## Тесты
 
@@ -65,6 +66,21 @@ python -m pytest -q
 
 Режим переключается кнопками (`🌐 Веб-поиск` / `💬 Обычный чат`) только в приватных чатах, либо
 явной командой `/web <текст>` и `/search <текст>`.
+
+## Распознавание картинок (`handle_photo`)
+
+Фото (`filters.PHOTO`) и изображения, присланные как файл (`Document.IMAGE`), обрабатываются
+`handle_photo` — остальные документы и видео по-прежнему уходят в `handle_unsupported`
+(`Document.ALL & ~Document.IMAGE | filters.VIDEO`). Картинка скачивается через `get_file()` →
+`download_as_bytearray()`, кодируется в base64 и отправляется в `chat.completions.create` как
+`image_url` с data-URL (`data:image/jpeg;base64,...`), caption пользователя — как текст вопроса
+(дефолт: "Что на этой картинке?").
+
+Используется **отдельная константа `VISION_MODEL`** (env, default `gpt-4o-mini`), а не
+`current_model` — потому что `current_model` меняется командой `/model` на произвольную модель,
+и не каждая такая модель поддерживает vision. Если бы `handle_photo` брал `current_model`, фича
+могла бы сломаться после `/model gpt-3.5-turbo`. Не заменять `VISION_MODEL` на `current_model`
+в `handle_photo`.
 
 ## Известные проблемы / долги
 
