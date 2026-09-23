@@ -2,11 +2,7 @@
 import os
 import tempfile
 import requests
-import os
-import requests
-import os, requests
 from urllib.parse import urlparse
-from pydub import AudioSegment
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
@@ -18,9 +14,6 @@ from telegram.ext import (
 )
 from telegram.ext.filters import Document
 from collections import defaultdict, deque
-from telegram.ext import CommandHandler
-from typing import List
-from urllib.parse import urlparse
 from datetime import datetime
 from logger import setup_logger
 
@@ -100,8 +93,11 @@ def is_allowed(update: Update) -> bool:
         if BOT_USERNAME.lower() in text.lower():
             return True
         # 2. Ответ на сообщение бота
-        if message.reply_to_message and message.reply_to_message.from_user.username == BOT_USERNAME:
-            return True
+        replied = message.reply_to_message
+        if replied and replied.from_user:
+            username = replied.from_user.username or ""
+            if username.lower() == BOT_USERNAME.lower():
+                return True
     
     return False
 
@@ -455,8 +451,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user_id = user.id
 
+    ogg_path = None
+    wav_path = None
     logger.info(f"[{user.id}] @{user.username or 'no_username'} - VOICE: получено голосовое сообщение")
     try:
+        # pydub is needed only for voice messages. Import lazily so that
+        # text handlers and tests work on Python versions without audioop.
+        from pydub import AudioSegment
+
         # 1. Скачиваем голосовое
         voice_file = await update.message.voice.get_file()
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
@@ -508,11 +510,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"{user} - VOICE ERROR: {str(e)}")
         await update.message.reply_text(f"❌ Ошибка при обработке голосового: {format_exc(e)}")
     finally:
-        try:
-            os.remove(ogg_path)
-            os.remove(wav_path)
-        except OSError:
-            pass
+        for path in (ogg_path, wav_path):
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
 async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
@@ -525,6 +528,8 @@ async def handle_unsupported(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("❌ Извините, я пока не умею обрабатывать файлы, изображения или вложения.")
 
 async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
     if not context.args:
         await update.message.reply_text("⚠️ Укажи запрос: /search <текст>")
         return
@@ -553,6 +558,8 @@ async def debug_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Failed to log raw update: %s", e)
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
     user_id = update.effective_user.id
     if update.effective_chat.type == "private":
         user_histories.pop(user_id, None)

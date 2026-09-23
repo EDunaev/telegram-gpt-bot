@@ -30,8 +30,9 @@ class DummyMessage:
         self.text = text
         self.caption = caption
         self.replies = []
+        self.reply_to_message = None
 
-    async def reply_text(self, msg):
+    async def reply_text(self, msg, **kwargs):
         self.replies.append(msg)
 
 class DummyUpdate:
@@ -74,5 +75,30 @@ async def test_set_model_as_admin():
     context.args = ["gpt-3.5-turbo"]
     await set_model(update, context)
     assert "gpt-3.5-turbo" in update.message.replies[0]
+
+@pytest.mark.asyncio
+async def test_search_command_ignores_unauthorized_user(monkeypatch):
+    from gpt_bot import search_cmd
+    update = DummyUpdate(user_id=999999, chat_id=CHAT_ID)
+    context = MagicMock()
+    context.args = ["secret"]
+    called = False
+
+    def fake_search(_query):
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr("gpt_bot.google_search", fake_search)
+    await search_cmd(update, context)
+    assert not called
+    assert update.message.replies == []
+
+@pytest.mark.asyncio
+async def test_reset_ignores_unauthorized_user():
+    from gpt_bot import reset
+    update = DummyUpdate(user_id=999999, chat_id=CHAT_ID)
+    await reset(update, MagicMock())
+    assert update.message.replies == []
 
 
